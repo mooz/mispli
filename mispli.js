@@ -362,8 +362,6 @@ function Eval(form, env) {
         if (sym.type !== ATOM_SYMBOL)
             throw tos(sym) + " is not a function";
 
-        print(sym.name);
-
         if (sym.name in specials)
             return specials[sym.name].apply(null, listToArray(args));
         else
