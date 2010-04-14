@@ -90,14 +90,21 @@ function getSymbolValue(symbol, type) {
     }
 }
 
+function isConstant(symbol) {
+    return hasSymbolType(symbol, SYM_CONSTANT) || symbol.name[0] === ":";
+}
+
 function createSymbol(name) {
-    return createAtom(ATOM_SYMBOL, name, {});
+    return createAtom(ATOM_SYMBOL, name);
 }
 
 function intern(name, context) {
     context = context || genv;
     if (!(name in genv))
+    {
         genv[name] = createSymbol(name);
+        genv[name].value = {};
+    }
     return genv[name];
 }
 
@@ -111,6 +118,20 @@ setSymbolValue(t, SYM_CONSTANT, t);
 
 var nil = intern("nil");
 setSymbolValue(nil, SYM_CONSTANT, nil);
+
+function set(atom, value, constant) {
+    if (!symbolp(atom))
+        throw "wrong type symbolp" + tos(atom);
+
+    var sym = intern(atom.name);
+
+    if (isConstant(sym))
+        throw "setting value to the constant";
+
+    setSymbolValue(sym, constant ? SYM_CONSTANT : SYM_VARIABLE, value);
+
+    return value;
+}
 
 // ====================================================================== //
 // Atom, Symbol / Utils
@@ -161,6 +182,7 @@ function equal(a, b) {
         return a.name === b.name;
     case ATOM_STRING:
         return a.value === b.value;
+    case ATOM_NUMBER:
         return a.value === b.value;
     }
 }
@@ -296,7 +318,7 @@ Parser.prototype = {
     },
 
     parseSymbolOrNumber: function parseSymbolOrNumber() {
-        const symbolp = /[a-zA-Z0-9*&^%$@!~_+=:./-]/;
+        const symbolp = /[a-zA-Z0-9*&^%$@!~_+=<>:./-]/;
 
         var buffer = [];
 
@@ -308,15 +330,8 @@ Parser.prototype = {
 
         var symbolName = buffer.join("");
 
-        if (/^[0-9.e-]+$/.test(symbolName))
-        {
-            // var dotMatch = symbolName.match(/[.]/g);
-            // var dotCount = dotMatch ? dotMatch.length : 0;
-
-            // /([.]|e[0-9]+)/;
-
+        if (/^-?[0-9]+([.][0-9]*|e-?[0-9]+)?$/.test(symbolName))
             return createNumber(parseFloat(symbolName));
-        }
 
         return createSymbol(symbolName);
     }
@@ -325,6 +340,18 @@ Parser.prototype = {
 // ====================================================================== //
 // Evaluation
 // ====================================================================== //
+
+function listToArray(lst) {
+    for (var array = []; isTrue(cdr(lst)); lst = cdr(lst))
+    {
+        if (!listp(cdr(lst)))
+            throw "not a pure list given";
+        array.push(car(lst));
+    }
+    array.push(car(lst));
+
+    return array;
+}
 
 function Eval(form, env) {
     if (form instanceof Array)
@@ -335,13 +362,18 @@ function Eval(form, env) {
         if (sym.type !== ATOM_SYMBOL)
             throw tos(sym) + " is not a function";
 
+        print(sym.name);
+
         if (sym.name in specials)
-            return specials[sym.name](args);
+            return specials[sym.name].apply(null, listToArray(args));
         else
         {
             if (sym.name in builtins)
-                return builtins[sym.name](args);
-            else if (sym in genv && genv[sym.name].fbound)
+                return builtins[sym.name].apply(
+                    null,
+                    listToArray(args).map(function (f) { return Eval(f); })
+                );
+            else if (sym in genv && hasSymbolType(genv[sym.name], SYM_FUNCTION))
             {
                 // function
 
@@ -391,7 +423,7 @@ function Eval(form, env) {
 
 function argCount(args) {
     var count = 0;
-    while (isList(cdr(args)) && !isNil(cdr(args)))
+    while (listp(cdr(args)) && !isNil(cdr(args)))
         count++, args = cdr(args);
     return count;
 }
@@ -417,9 +449,84 @@ function special(names, func) {
 // Special forms / Basics
 // ====================================================================== //
 
-special('setq', function (args) {
+special('quote', function (x) { return x; });
 
+special('set', function (sym, val) {
+            for (var i = 0; i < arguments.length; i += 2)
+            {
+                sym = Eval(arguments[i]);
+                val = Eval(arguments[i + 1]) || nil;
+                set(sym, val);
+            }
+
+            return val;
         });
+
+special('setq', function (sym, val) {
+            for (var i = 0; i < arguments.length; i += 2)
+            {
+                sym = arguments[i];
+                val = Eval(arguments[i + 1]) || nil;
+                set(sym, val);
+            }
+
+            return val;
+        });
+
+// ====================================================================== //
+// Special forms / Control Structures
+// ====================================================================== //
+
+special(
+    'if',
+    function (test, tform, fform) {
+        if (isTrue(Eval(test)))
+            return Eval(tform);
+
+        var val = nil;
+        for (var i = 2; i < arguments.length; ++i)
+            val = Eval(arguments[i]);
+        return val;
+    }
+);
+
+special(
+    'while',
+    function (test, body) {
+        while (isTrue(Eval(test)))
+            for (var i = 1; i < arguments.length; ++i)
+                Eval(arguments[i]);
+        return t;
+    });
+
+special(
+    'progn',
+    function (body) {
+        var val = nil;
+        for (var i = 0; i < arguments.length; ++i)
+            val = Eval(arguments[i]);
+        return val;
+    });
+
+special(
+    'and',
+    function (conditions) {
+        var v;
+        for (var i = 0; i < arguments.length; ++i)
+            if (isNil(v = Eval(arguments[i])))
+                return nil;
+        return v;
+    });
+
+special(
+    'or',
+    function (conditions) {
+        var v;
+        for (var i = 0; i < arguments.length; ++i)
+            if (isTrue(v = Eval(arguments[i])))
+                return v;
+        return nil;
+    });
 
 // ====================================================================== //
 // Builtin functions
@@ -437,136 +544,87 @@ function builtin(names, func) {
 // Builtin functions / Predicatives
 // ====================================================================== //
 
+// boolean => boolean
 var b2b = {
     true  : t,
     false : nil
 };
 
-builtin(['eq', 'eql'], function (lst) { return eq(car(lst), cadr(lst)); });
-builtin('equal', function (lst) { return equal(car(lst), cadr(lst)); });
+builtin(['eq', 'eql'], function (a, b) { return eq(a, b); });
+builtin('equal', function (a, b) { return equal(a, b); });
 
-builtin(['null', 'not'], function (lst) { return b2b[isNil(car(lst))]; });
-builtin('symbolp', function (lst) { return b2b[symbolp(car(lst))]; });
-builtin('atom', function (lst) { return b2b[atom(car(lst))]; });
-builtin('consp', function (lst) { return b2b[consp(car(lst))]; });
-builtin('listp', function (lst) { return b2b[listp(car(lst))]; });
-builtin('numberp', function (lst) { return b2b[numberp(car(lst))]; });
-builtin('stringp', function (lst) { return b2b[stringp(car(lst))]; });
-
-builtin('and', function (lst) {
-            // elements of the lst must be list ()
-        });
-
-// ====================================================================== //
-// Builtin functions / Control Structures
-// ====================================================================== //
-
-builtin(
-    'if',
-    function ([pred, form]) {
-        var tform = car(form);
-        var fform = cdr(form);
-
-        if (isTrue(Eval(pred)))
-            return Eval(tform);
-        else if (fform)
-            return Eval(['progn', fform]);
-        return nil;
-    }
-);
-
-builtin(
-    'while',
-    function (pred, form) {
-        while (isTrue(Eval(pred)))
-            Eval(form);
-        return t;
-    });
-
-builtin(
-    'progn',
-    function (lst) {
-        var val = nil;
-        for (var i = 0; i < lst.length; ++i)
-            val = Eval(lst[i]);
-        return val;
-    });
-
-// ====================================================================== //
-// Builtin functions / Basics
-// ====================================================================== //
-
-builtin('quote', function (lst) { return car(lst); });
+builtin(['null', 'not'], function (x) { return b2b[isNil(x)]; });
+builtin('symbolp', function (x) { return b2b[symbolp(x)]; });
+builtin('atom', function (x) { return b2b[atom(x)]; });
+builtin('consp', function (x) { return b2b[consp(x)]; });
+builtin('listp', function (x) { return b2b[listp(x)]; });
+builtin('numberp', function (x) { return b2b[numberp(x)]; });
+builtin('stringp', function (x) { return b2b[stringp(x)]; });
 
 // ====================================================================== //
 // Builtin functions / List processing
 // ====================================================================== //
 
-builtin('cons', function (lst) { return [Eval(car(lst)), Eval(cadr(lst))]; });
-
-builtin('car', function (lst)  { return car(Eval(car(lst))); });
-builtin('cdr', function (lst)  { return cdr(Eval(car(lst))); });
-
-builtin('caar', function (lst) { return caar(Eval(car(lst))); });
-builtin('cadr', function (lst) { return cadr(Eval(car(lst))); });
-builtin('cdar', function (lst) { return cdar(Eval(car(lst))); });
-builtin('cddr', function (lst) { return cddr(Eval(car(lst))); });
+builtin('cons', cons);
+builtin('car',  car);
+builtin('cdr',  cdr);
+builtin('caar', caar);
+builtin('cadr', cadr);
+builtin('cdar', cdar);
+builtin('cddr', cddr);
 
 // ====================================================================== //
 // Builtin functions / Operators
 // ====================================================================== //
 
-builtin('+', function (lst) {
-            for (var v = 0; isTrue(car(lst)); lst = cdr(lst))
-                v += Eval(car(lst)).value;
+builtin('+', function (numbers) {
+            for (var i = 0, v = 0; i < arguments.length; ++i)
+                v += arguments[i].value;
             return createNumber(v);
         });
-builtin('-', function (lst) {
-            for (var v = 0; isTrue(car(lst)); lst = cdr(lst))
-                v -= Eval(car(lst)).value;
+builtin('-', function (x, numbers) {
+            for (var i = 1, v = x.value; i < arguments.length; ++i)
+                v -= arguments[i].value;
             return createNumber(v);
         });
-builtin('*', function (lst) {
-            for (var v = 1; isTrue(car(lst)); lst = cdr(lst))
-                v *= Eval(car(lst)).value;
+builtin('*', function (numbers) {
+            for (var i = 0, v = 1; i < arguments.length; ++i)
+                v *= arguments[i].value;
             return createNumber(v);
         });
-builtin('/', function (lst) {
-            for (var v = Eval(car(lst)).value; isTrue(cdr(lst)); v /= Eval(car(lst)).value)
-                lst = cdr(lst);
+builtin('/', function (x, divisors) {
+            for (var i = 1, v = x.value; i < arguments.length; ++i)
+                v /= arguments[i].value;
             return createNumber(v);
         });
-builtin('%', function (lst) {
-
-            for (var v = Eval(car(lst)).value; isTrue(cdr(lst)); v %= Eval(car(lst)).value)
-                lst = cdr(lst);
-            return createNumber(v);
+builtin('%', function (x, y) {
+            return createNumber(x.value % y.value);
         });
 
-builtin('1-', function (lst) { return Eval(car(lst)) - 1; });
-builtin('1+', function (lst) { return Eval(car(lst)) + 1; });
+builtin('1-', function (x) { return createNumber(x.value - 1); });
+builtin('1+', function (x) { return createNumber(x.value + 1); });
 
 // ====================================================================== //
 // Builtin functions / Operators
 // ====================================================================== //
 
-builtin('=',  function (lst) { return b2b[Eval(car(lst)) == Eval(cadr(lst))]; });
-builtin('<',  function (lst) { return b2b[Eval(car(lst)) <  Eval(cadr(lst))]; });
-builtin('<=', function (lst) { return b2b[Eval(car(lst)) <= Eval(cadr(lst))]; });
-builtin('>',  function (lst) { return b2b[Eval(car(lst)) >  Eval(cadr(lst))]; });
-builtin('>=', function (lst) { return b2b[Eval(car(lst)) >= Eval(cadr(lst))]; });
+builtin('=',  function (x, y) { return b2b[x.value == y.value]; });
+builtin('<',  function (x, y) { return b2b[x.value <  y.value]; });
+builtin('<=', function (x, y) { return b2b[x.value <= y.value]; });
+builtin('>',  function (x, y) { return b2b[x.value >  y.value]; });
+builtin('>=', function (x, y) { return b2b[x.value >= y.value]; });
 
 // ====================================================================== //
 // Builtin functions / IO
 // ====================================================================== //
 
-builtin('print', function (lst) { var v = Eval(car(lst)); print(tos(v)); return v; });
+builtin('print', function (v) { print(tos(v)); return v; });
 
 // ====================================================================== //
 // Utils
 // ====================================================================== //
 
-if (window)
+if (typeof window !== "undefined")
 {
     window.print = function (str) {
         Application.console.log(str);
@@ -602,4 +660,4 @@ function assert(result, exp) {
 assert(ev("()"), nil);
 assert(ev("1"), createNumber(1));
 
-
+checker("(progn (setq i 10) (while (> i 0) (print i) (setq i (1- i))))");
