@@ -1,5 +1,5 @@
 /**
- * @fileOverview LISP like
+ * @fileOverview small lisp implementation written in javascript
  * @name mispli
  * @author mooz <stillpedant@gmail.com>
  * @license The MIT License
