@@ -10,6 +10,7 @@
 // ====================================================================== //
 
 var genv     = {};
+var envs     = [];
 var builtins = {};
 var specials = {};
 
@@ -60,7 +61,13 @@ function setSymbolValue(symbol, type, value) {
 
 function hasSymbolType(symbol, type) {
     if (symbol.type !== ATOM_SYMBOL)
+    {
+        dir(symbol);
         throw "Non symbol value passed";
+    }
+
+    if (!symbol.type)
+        return false;
 
     switch (type)
     {
@@ -90,7 +97,20 @@ function getSymbolValue(symbol, type) {
     }
 }
 
-function isConstant(symbol) {
+function findSymbolInEnv(name, type, env) {
+    if (name in env && (!type || hasSymbolType(env[name], type)))
+        return env[name];
+}
+
+function findSymbol(name, type) {
+    var sym;
+    for (var i = envs.length - 1; i >= 0; --i)
+        if ((sym = findSymbolInEnv(name, type, envs[i])))
+            return sym;
+    return findSymbolInEnv(name, type, genv);
+}
+
+function isSymConstant(symbol) {
     return hasSymbolType(symbol, SYM_CONSTANT) || symbol.name[0] === ":";
 }
 
@@ -100,17 +120,42 @@ function createSymbol(name) {
 
 function intern(name, context) {
     context = context || genv;
-    if (!(name in genv))
+    if (!(name in context))
     {
-        genv[name] = createSymbol(name);
-        genv[name].value = {};
+        context[name] = createSymbol(name);
+        context[name].value = {};
     }
-    return genv[name];
+    return context[name];
 }
 
 function unintern(name, context) {
     context = context || genv;
-    delete genv[name];
+    delete context[name];
+}
+
+function set(atom, value, constant, context) {
+    if (!symbolp(atom))
+        throw "wrong type symbolp" + tos(atom);
+
+    var sym = intern(atom.name, context);
+
+    if (isSymConstant(sym))
+        throw "setting value to the constant";
+
+    setSymbolValue(sym, constant ? SYM_CONSTANT : SYM_VARIABLE, value);
+
+    return value;
+}
+
+function setFunc(atom, func) {
+    if (!symbolp(atom))
+        throw "wrong type symbolp" + tos(atom);
+
+    var sym = intern(atom.name);
+
+    setSymbolValue(sym, SYM_FUNCTION, func);
+
+    return func;
 }
 
 var t = intern("t");
@@ -118,20 +163,6 @@ setSymbolValue(t, SYM_CONSTANT, t);
 
 var nil = intern("nil");
 setSymbolValue(nil, SYM_CONSTANT, nil);
-
-function set(atom, value, constant) {
-    if (!symbolp(atom))
-        throw "wrong type symbolp" + tos(atom);
-
-    var sym = intern(atom.name);
-
-    if (isConstant(sym))
-        throw "setting value to the constant";
-
-    setSymbolValue(sym, constant ? SYM_CONSTANT : SYM_VARIABLE, value);
-
-    return value;
-}
 
 // ====================================================================== //
 // Atom, Symbol / Utils
@@ -153,6 +184,27 @@ function tos(elem) {
         return elem.value;
         break;
     }
+}
+
+function listToArray(lst) {
+    for (var array = []; isTrue(cdr(lst)); lst = cdr(lst))
+    {
+        if (!listp(cdr(lst)))
+            throw "not a pure list given";
+        array.push(car(lst));
+    }
+    array.push(car(lst));
+
+    return array;
+}
+
+function arrayToList(array) {
+    var lst = nil;
+
+    for (var i = array.length - 1; i >= 0; --i)
+        lst = cons(array[i], lst);
+
+    return lst;
 }
 
 // ====================================================================== //
@@ -209,13 +261,13 @@ function consp(x)   { return !atom(x); }
 // Basic functions for list processing
 // ====================================================================== //
 
-function car(list)  { return isNil(list) ? nil : list[0]; }
-function cdr(list)  { return isNil(list) ? nil : list[1]; }
+function car(lst)  { return isNil(lst) ? nil : lst[0]; }
+function cdr(lst)  { return isNil(lst) ? nil : lst[1]; }
 
-function caar(list) { return car(car(list)); }
-function cadr(list) { return car(cdr(list)); }
-function cdar(list) { return cdr(car(list)); }
-function cddr(list) { return cdr(cdr(list)); }
+function caar(lst) { return car(car(lst)); }
+function cadr(lst) { return car(cdr(lst)); }
+function cdar(lst) { return cdr(car(lst)); }
+function cddr(lst) { return cdr(cdr(lst)); }
 
 function cons(a, b) { return [a, b]; };
 
@@ -231,9 +283,14 @@ Parser.prototype = {
         this.str  = str;
         this.slen = str.length;
 
-        this.skip();
+        var val;
+        while (!this.eos())
+        {
+            this.skip();
+            val = this.parseElement();
+        }
 
-        return this.parseElement();
+        return val;
     },
 
     eos: function () {
@@ -273,7 +330,7 @@ Parser.prototype = {
     },
 
     parseList: function parseList() {
-        var list = [];
+        var lst = [];
 
         if (this.getCurrent() !== "(")
             throw "parseList : ParseError";
@@ -281,18 +338,18 @@ Parser.prototype = {
         while (this.peekCurrent() !== ")" && !this.eos())
         {
             this.skip();
-            list.push(this.parseElement());
+            lst.push(this.parseElement());
         }
 
         if (this.getCurrent() !== ")")
             throw "parseList : Unclosed Parenthethis";
 
-        var slist = nil;
+        var slst = nil;
 
-        while (list.length)
-            slist = [list.pop(), slist];
+        while (lst.length)
+            slst = [lst.pop(), slst];
 
-        return slist;
+        return slst;
     },
 
     parseString: function () {
@@ -341,43 +398,61 @@ Parser.prototype = {
 // Evaluation
 // ====================================================================== //
 
-function listToArray(lst) {
-    for (var array = []; isTrue(cdr(lst)); lst = cdr(lst))
-    {
-        if (!listp(cdr(lst)))
-            throw "not a pure list given";
-        array.push(car(lst));
-    }
-    array.push(car(lst));
+function evalFunction(func, args) {
+    // func => [lambda, [  [arg1, [arg2, nil]], [body]]]
+    var body = cddr(func);
+    var pargs = listToArray(cadr(func));
 
-    return array;
+    if (args.length !== pargs.length)
+        throw "wrong number of arguments";
+
+    var env = {};
+
+    for (var i = 0; i < pargs.length; ++i)
+    {
+        var sym = intern(pargs[i].name, env);
+        setSymbolValue(sym, SYM_VARIABLE, args[i]);
+    }
+
+    // print(tos(cons(createSymbol('progn'), body)));
+
+    envs.push(env);
+    var val = Eval(cons(createSymbol('progn'), body));
+    envs.pop();
+
+    return val;
 }
 
-function Eval(form, env) {
+function Eval(form) {
     if (form instanceof Array)
     {
         var sym  = car(form);
         var args = cdr(form);
 
+        // if (sym instanceof Array)
+        // direct lambda call like ((lambda (a) a) 1) is not implemented yet.
+
         if (sym.type !== ATOM_SYMBOL)
             throw tos(sym) + " is not a function";
 
         if (sym.name in specials)
-            return specials[sym.name].apply(null, listToArray(args));
+            return specials[sym.name](args);
         else
         {
+            var evaledArgs = listToArray(args).map(Eval);
+            var symInEnv;
+
             if (sym.name in builtins)
-                return builtins[sym.name].apply(
-                    null,
-                    listToArray(args).map(function (f) { return Eval(f); })
-                );
-            else if (sym in genv && hasSymbolType(genv[sym.name], SYM_FUNCTION))
+                return builtins[sym.name].apply(null, evaledArgs);
+            else if ((symInEnv = findSymbol(sym.name, SYM_FUNCTION)))
             {
                 // function
+                var func = getSymbolValue(symInEnv, SYM_FUNCTION);
 
-                // Not implemented yet
-                // var lambda = genv[sym];
-                // cdr(lambda);
+                if (car(func).name !== 'lambda')
+                    throw "invalid function " + tos(sym);
+
+                return evalFunction(func, evaledArgs);
             }
             else
                 throw "void function " + tos(sym);
@@ -395,7 +470,7 @@ function Eval(form, env) {
             if (name && name[0] === ":") // keyword
                 return atom;
 
-            var sym = genv[name];
+            var sym = findSymbol(name);
 
             if (!sym)
                 throw "void variable " + name;
@@ -447,28 +522,44 @@ function special(names, func) {
 // Special forms / Basics
 // ====================================================================== //
 
-special('quote', function (x) { return x; });
+special('quote', function (lst) { return car(lst); });
 
-special('set', function (sym, val) {
-            for (var i = 0; i < arguments.length; i += 2)
+special('set', function (lst) {
+            var args = listToArray(lst);
+            for (var i = 0; i < args.length; i += 2)
             {
-                sym = Eval(arguments[i]);
-                val = Eval(arguments[i + 1]) || nil;
+                var sym = Eval(args[i]);
+                var val = Eval(args[i + 1]) || nil;
                 set(sym, val);
             }
 
             return val;
         });
 
-special('setq', function (sym, val) {
-            for (var i = 0; i < arguments.length; i += 2)
+special('setq', function (lst) {
+            var args = listToArray(lst);
+            for (var i = 0; i < args.length; i += 2)
             {
-                sym = arguments[i];
-                val = Eval(arguments[i + 1]) || nil;
+                var sym = args[i];
+                var val = Eval(args[i + 1]) || nil;
                 set(sym, val);
             }
 
             return val;
+        });
+
+special('defun', function (lst) {
+            var name  = car(lst);
+            var pargs = cadr(lst);
+            var body  = cddr(lst);
+
+            print("args :: => " + tos(pargs));
+            print("body :: => " + tos(body));
+
+            var func = cons(createSymbol('lambda'), cons(pargs, body));
+            print("func :: => " + tos(func));
+            setFunc(name, func);
+            return nil;
         });
 
 // ====================================================================== //
@@ -477,51 +568,63 @@ special('setq', function (sym, val) {
 
 special(
     'if',
-    function (test, tform, fform) {
+    function (lst) {
+        var test  = car(lst);
+        var tform = cadr(lst);
+        var fform = cddr(lst);
+
         if (isTrue(Eval(test)))
             return Eval(tform);
 
+        fform = listToArray(fform);
+
         var val = nil;
-        for (var i = 2; i < arguments.length; ++i)
-            val = Eval(arguments[i]);
+        for (var i = 0; i < fform.length; ++i)
+            val = Eval(fform[i]);
         return val;
     }
 );
 
 special(
     'while',
-    function (test, body) {
+    function (lst) {
+        var test = car(lst);
+        var body = cadr(lst);
+        body = listToArray(body);
         while (isTrue(Eval(test)))
-            for (var i = 1; i < arguments.length; ++i)
-                Eval(arguments[i]);
+            for (var i = 0; i < body.length; ++i)
+                Eval(body[i]);
         return t;
     });
 
 special(
     'progn',
-    function (body) {
+    function (lst) {
+        var body = listToArray(lst);
         var val = nil;
-        for (var i = 0; i < arguments.length; ++i)
-            val = Eval(arguments[i]);
+        for (var i = 0; i < body.length; ++i)
+            val = Eval(body[i]);
         return val;
     });
 
 special(
     'and',
-    function (conditions) {
+    function (lst) {
+        var conditions = listToArray(lst);
         var v;
-        for (var i = 0; i < arguments.length; ++i)
-            if (isNil(v = Eval(arguments[i])))
+        for (var i = 0; i < conditions.length; ++i)
+            if (isNil(v = Eval(conditions[i])))
                 return nil;
         return v;
     });
 
 special(
     'or',
-    function (conditions) {
+    function (lst) {
+        var conditions = listToArray(lst);
         var v;
-        for (var i = 0; i < arguments.length; ++i)
-            if (isTrue(v = Eval(arguments[i])))
+        for (var i = 0; i < conditions.length; ++i)
+            if (isTrue(v = Eval(conditions[i])))
                 return v;
         return nil;
     });
