@@ -266,6 +266,9 @@ function consp(x)   { return !atom(x); }
 // Basic functions for list processing
 // ====================================================================== //
 
+function setCar(lst, val)  { return lst[0] = val; }
+function setCdr(lst, val)  { return lst[1] = val; }
+
 function car(lst)  { return isNil(lst) ? nil : lst[0]; }
 function cdr(lst)  { return isNil(lst) ? nil : lst[1]; }
 
@@ -275,6 +278,23 @@ function cdar(lst) { return cdr(car(lst)); }
 function cddr(lst) { return cdr(cdr(lst)); }
 
 function cons(a, b) { return [a, b]; };
+
+function append() {
+    for (var i = 0; i < arguments.length; ++i)
+    {
+        if (!listp(arguments[i]))
+            throw "append : wrong type argument";
+
+        var lst = arguments[i];
+
+        while (isTrue(cdr(lst)))
+            lst = cdr(lst);
+
+        setCdr(lst, arguments[i + 1] || nil);
+    }
+
+    return arguments[0];
+};
 
 // ====================================================================== //
 // Parser
@@ -421,8 +441,6 @@ function evalFunction(func, args) {
         setSymbolValue(sym, SYM_VARIABLE, args[i]);
     }
 
-    // print(tos(cons(createSymbol('progn'), body)));
-
     envs.push(env);
     var val = Eval(cons(createSymbol('progn'), body));
     envs.pop();
@@ -560,11 +578,7 @@ special('defun', function (lst) {
             var pargs = cadr(lst);
             var body  = cddr(lst);
 
-            print("args :: => " + tos(pargs));
-            print("body :: => " + tos(body));
-
             var func = cons(createSymbol('lambda'), cons(pargs, body));
-            print("func :: => " + tos(func));
             setFunc(name, func);
             return nil;
         });
@@ -576,8 +590,7 @@ special('let', function (lst) {
             var vars = vlist.map(car);
             var vals = vlist.map(cadr).map(Eval);
 
-            return evalFunction(cons(createSymbol('lambda'), cons(arrayToList(vars), body)),
-                                arrayToList(vals));
+            return evalFunction(cons(createSymbol('lambda'), cons(arrayToList(vars), body)), vals);
         });
 
 // ====================================================================== //
@@ -781,4 +794,4 @@ assert(ev("1"), createNumber(1));
 
 checker("(progn (setq i 10) (while (> i 0) (print i) (setq i (1- i))))");
 
-print(tos(new Parser().parse("(let ((a :b) (c :d)))")));
+checker("(progn (let ((a 1) (c 2)) (print a) (print c)) (print a))");
