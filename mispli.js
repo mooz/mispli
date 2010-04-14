@@ -170,7 +170,12 @@ setSymbolValue(nil, SYM_CONSTANT, nil);
 
 function tos(elem) {
     if (elem instanceof Array)
-        return "(" + elem.map(tos).join(" . ") + ")";
+    {
+        var a = tos(car(elem));
+        var b = tos(cdr(elem));
+        return "(" + a + " . " + b + ")";
+        // return "(" + a + (listp(cdr(elem)) ? " " : " . ") + b + ")";
+    }
 
     switch (elem.type)
     {
@@ -775,3 +780,5 @@ assert(ev("()"), nil);
 assert(ev("1"), createNumber(1));
 
 checker("(progn (setq i 10) (while (> i 0) (print i) (setq i (1- i))))");
+
+print(tos(new Parser().parse("(let ((a :b) (c :d)))")));
