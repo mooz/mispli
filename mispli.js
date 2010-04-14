@@ -321,7 +321,9 @@ Parser.prototype = {
     parseElement: function () {
         var current = this.peekCurrent();
 
-        if (current === "(")
+        if (current === "'" && this.peekNext() === "(")
+            return this.getCurrent(), [createSymbol('quote'), [this.parseList(), nil]];
+        else if (current === "(")
             return this.parseList();
         else if (current === "\"")
             return this.parseString();
