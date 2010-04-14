@@ -591,7 +591,7 @@ special(
     'while',
     function (lst) {
         var test = car(lst);
-        var body = cadr(lst);
+        var body = cdr(lst);
         body = listToArray(body);
         while (isTrue(Eval(test)))
             for (var i = 0; i < body.length; ++i)
