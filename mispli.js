@@ -14,15 +14,12 @@ var builtins = {};
 var specials = {};
 
 // ====================================================================== //
-// Atom
+// Atom, Symbol
 // ====================================================================== //
 
-const T_ATOM_UISYMBOL = 1;
-const T_ATOM_SYMBOL   = 2;
-const T_ATOM_STRING   = 3;
-const T_ATOM_NUMBER   = 4;
-const T_ATOM_T        = 5;
-const T_ATOM_NIL      = 6;
+const ATOM_SYMBOL = 1;
+const ATOM_STRING = 2;
+const ATOM_NUMBER = 3;
 
 function createAtom(type, name, value) {
     return {
@@ -32,12 +29,92 @@ function createAtom(type, name, value) {
     };
 }
 
-function createUISymbol(name) { return createAtom(T_ATOM_UISYMBOL, name); } // uninterned symbol
-function createString(value) { return createAtom(T_ATOM_STRING, null, value); }
-function createNumber(value) { return createAtom(T_ATOM_NUMBER, null, value); }
+function createString(value) { return createAtom(ATOM_STRING, null, value); }
+function createNumber(value) { return createAtom(ATOM_NUMBER, null, value); }
 
-var t   = createAtom(T_ATOM_T);
-var nil = createAtom(T_ATOM_NIL);
+// ====================================================================== //
+// Atom, Symbol / Symbol
+// ====================================================================== //
+
+const SYM_VARIABLE = 1;
+const SYM_FUNCTION = 2;
+const SYM_CONSTANT = 3;
+
+function setSymbolValue(symbol, type, value) {
+    if (symbol.type !== ATOM_SYMBOL)
+        throw "Wrong assignment";
+
+    switch (type)
+    {
+    case SYM_VARIABLE:
+        symbol.value.v = value;
+        break;
+    case SYM_FUNCTION:
+        symbol.value.f = value;
+        break;
+    case SYM_CONSTANT:
+        symbol.value.c = value;
+        break;
+    }
+}
+
+function hasSymbolType(symbol, type) {
+    if (symbol.type !== ATOM_SYMBOL)
+        throw "Non symbol value passed";
+
+    switch (type)
+    {
+    case SYM_VARIABLE:
+        return !!symbol.value.v;
+    case SYM_FUNCTION:
+        return !!symbol.value.f;
+    case SYM_CONSTANT:
+        return !!symbol.value.c;
+    }
+
+    return false;
+}
+
+function getSymbolValue(symbol, type) {
+    if (symbol.type !== ATOM_SYMBOL)
+        throw "Non symbol value passed";
+
+    switch (type)
+    {
+    case SYM_VARIABLE:
+        return symbol.value.v;
+    case SYM_FUNCTION:
+        return symbol.value.f;
+    case SYM_CONSTANT:
+        return symbol.value.c;
+    }
+}
+
+function createSymbol(name) {
+    return createAtom(ATOM_SYMBOL, name, {});
+}
+
+function intern(name, context) {
+    context = context || genv;
+    if (!(name in genv))
+        genv[name] = createSymbol(name);
+    return genv[name];
+}
+
+function unintern(name, context) {
+    context = context || genv;
+    delete genv[name];
+}
+
+var t = intern("t");
+setSymbolValue(t, SYM_CONSTANT, t);
+
+var nil = intern("nil");
+setSymbolValue(nil, SYM_CONSTANT, nil);
+
+// ====================================================================== //
+// Atom, Symbol / Utils
+// ====================================================================== //
 
 function tos(elem) {
     if (elem instanceof Array)
@@ -45,51 +122,16 @@ function tos(elem) {
 
     switch (elem.type)
     {
-    case T_ATOM_UISYMBOL:
-    case T_ATOM_SYMBOL:
+    case ATOM_SYMBOL:
         return elem.name;
         break;
-    case T_ATOM_STRING:
+    case ATOM_STRING:
         return "\"" + elem.value + "\"";
         break;
-    case T_ATOM_NUMBER:
+    case ATOM_NUMBER:
         return elem.value;
         break;
-    case T_ATOM_T:
-        return "t";
-        break;
-    case T_ATOM_NIL:
-        return "nil";
-        break;
     }
-}
-
-// ====================================================================== //
-// Atom / Symbol
-// ====================================================================== //
-
-const TYPE_VARIABLE = 1;
-const TYPE_FUNCTION = 2;
-const TYPE_CONSTANT = 3;
-
-function Symbol(type, val) {
-    switch (type)
-    {
-    case TYPE_CONSTANT:
-        this.value  = val;
-        this.cbound = true;
-        break;
-    case TYPE_VARIABLE:
-        this.value  = val;
-        this.vbound = true;
-        break;
-    case TYPE_FUNCTION:
-        this.func   = val;
-        this.fbound = true;
-        break;
-    }
-
-    this.attributes = {};
 }
 
 // ====================================================================== //
@@ -115,15 +157,11 @@ function equal(a, b) {
 
     switch (a.type)
     {
-    case T_ATOM_UISYMBOL:
-    case T_ATOM_SYMBOL:
+    case ATOM_SYMBOL:
         return a.name === b.name;
-    case T_ATOM_STRING:
+    case ATOM_STRING:
         return a.value === b.value;
         return a.value === b.value;
-    case T_ATOM_T:
-    case T_ATOM_NIL:
-        return a === b;
     }
 }
 
@@ -137,22 +175,25 @@ function eq(a, b) {
 function isNil(x)   { return x === nil; }
 function isTrue (x) { return !isNil(x); }
 
-function symbolp(x) { return x.type === T_ATOM_SYMBOL || T_ATOM_SYMBOL; }
-function numberp(x) { return x.type === T_ATOM_NUMBER; }
-function stringp(x) { return x.type === T_ATOM_STRING; }
+function symbolp(x) { return x.type === ATOM_SYMBOL || isNil(x) || isTrue(x); }
+function numberp(x) { return x.type === ATOM_NUMBER; }
+function stringp(x) { return x.type === ATOM_STRING; }
 function listp(x)   { return isNil(x) || x instanceof Array; }
 
-function atom(x)    { return isNil(x) || symbolp(x) || numberp(x) || stringp(x) || listp(x); }
-function consp(x)   { return !atomp(x); }
+function atom(x)    { return isNil(x) || symbolp(x) || numberp(x) || stringp(x); }
+function consp(x)   { return !atom(x); }
 
 // ====================================================================== //
 // Basic functions for list processing
 // ====================================================================== //
 
-function car(list)  { return isNil(list) ? nil : list[0];    }
-function cdr(list)  { return isNil(list) ? nil : list[1];    }
-function cadr(list) { return isNil(list) ? nil : list[1][0]; }
-function cddr(list) { return isNil(list) ? nil : list[1][1]; }
+function car(list)  { return isNil(list) ? nil : list[0]; }
+function cdr(list)  { return isNil(list) ? nil : list[1]; }
+
+function caar(list) { return car(car(list)); }
+function cadr(list) { return car(cdr(list)); }
+function cdar(list) { return cdr(car(list)); }
+function cddr(list) { return cdr(cdr(list)); }
 
 function cons(a, b) { return [a, b]; };
 
@@ -255,7 +296,7 @@ Parser.prototype = {
     },
 
     parseSymbolOrNumber: function parseSymbolOrNumber() {
-        const symbolp = /[a-zA-Z0-9*&^%$@!~_+=./-]/;
+        const symbolp = /[a-zA-Z0-9*&^%$@!~_+=:./-]/;
 
         var buffer = [];
 
@@ -277,7 +318,7 @@ Parser.prototype = {
             return createNumber(parseFloat(symbolName));
         }
 
-        return createUISymbol(symbolName);
+        return createSymbol(symbolName);
     }
 };
 
@@ -285,59 +326,59 @@ Parser.prototype = {
 // Evaluation
 // ====================================================================== //
 
-function processSpecial(op, form) { /* ^^ */ }
-
-function Eval(form) {
+function Eval(form, env) {
     if (form instanceof Array)
     {
-        // list
+        var sym  = car(form);
+        var args = cdr(form);
 
-        var op = car(form);
+        if (sym.type !== ATOM_SYMBOL)
+            throw tos(sym) + " is not a function";
 
-        if (op.type !== T_ATOM_UISYMBOL && op.type !== T_ATOM_SYMBOL)
-            throw tos(op) + " is not a function";
-
-        if (op.name in specials)
-            return processSpecial(op.name, form); // special form
+        if (sym.name in specials)
+            return specials[sym.name](args);
         else
         {
-            if (op.name in builtins)
+            if (sym.name in builtins)
+                return builtins[sym.name](args);
+            else if (sym in genv && genv[sym.name].fbound)
             {
-                var args = cdr(form);
-                return builtins[op.name](args);
-            }
-            else if (op in genv && genv[op.name].fbound)
-            {
+                // function
+
                 // Not implemented yet
-                // var lambda = genv[op];
+                // var lambda = genv[sym];
                 // cdr(lambda);
             }
             else
-                throw "void function " + tos(op);
+                throw "void function " + tos(sym);
         }
     }
     else
     {
-        // atom
-
         var atom = form;
 
         switch (atom.type)
         {
-        case T_ATOM_UISYMBOL:
-        case T_ATOM_SYMBOL:
-            var name     = atom.name;
-            var variable = genv[name];
+        case ATOM_SYMBOL:
+            var name = atom.name;
 
-            if (variable && variable.vbound)
-                return variable.value;
+            if (name && name[0] === ":") // keyword
+                return atom;
+
+            var sym = genv[name];
+
+            if (!sym)
+                throw "void variable " + name;
+
+            if (hasSymbolType(sym, SYM_CONSTANT))
+                return getSymbolValue(sym, SYM_CONSTANT);
+            else if (hasSymbolType(sym, SYM_VARIABLE))
+                return getSymbolValue(sym, SYM_VARIABLE);
             else
-                throw "void variable " + tos(atom);
+                throw "void variable " + name;
             break;
-        case T_ATOM_STRING:
-        case T_ATOM_NUMBER:
-        case T_ATOM_T:
-        case T_ATOM_NIL:
+        case ATOM_STRING:
+        case ATOM_NUMBER:
             return atom;
             break;
         }
@@ -345,15 +386,44 @@ function Eval(form) {
 }
 
 // ====================================================================== //
-// Builtin functions
+// Arguments
 // ====================================================================== //
 
 function argCount(args) {
     var count = 0;
-    while (isTrue(cdr(args)))
+    while (isList(cdr(args)) && !isNil(cdr(args)))
         count++, args = cdr(args);
     return count;
 }
+
+function assertArgCount(args, count) {
+    if (argCount(args) !== count)
+        throw "Wrong number of arguments";
+}
+
+// ====================================================================== //
+// Special forms
+// ====================================================================== //
+
+function special(names, func) {
+    if (!(names instanceof Array))
+        names = [names];
+
+    for (var i in names)
+        specials[names[i]] = func;
+}
+
+// ====================================================================== //
+// Special forms / Basics
+// ====================================================================== //
+
+special('setq', function (args) {
+
+        });
+
+// ====================================================================== //
+// Builtin functions
+// ====================================================================== //
 
 function builtin(names, func) {
     if (!(names instanceof Array))
@@ -433,10 +503,14 @@ builtin('quote', function (lst) { return car(lst); });
 // ====================================================================== //
 
 builtin('cons', function (lst) { return [Eval(car(lst)), Eval(cadr(lst))]; });
-builtin('car', function (lst) { return Eval(car(lst)); });
-builtin('cdr', function (lst) { return Eval(cdr(lst)); });
-builtin('cadr', function (lst) { return Eval(cadr(lst)); });
-builtin('cddr', function (lst) { return Eval(cddr(lst)); });
+
+builtin('car', function (lst)  { return car(Eval(car(lst))); });
+builtin('cdr', function (lst)  { return cdr(Eval(car(lst))); });
+
+builtin('caar', function (lst) { return caar(Eval(car(lst))); });
+builtin('cadr', function (lst) { return cadr(Eval(car(lst))); });
+builtin('cdar', function (lst) { return cdar(Eval(car(lst))); });
+builtin('cddr', function (lst) { return cddr(Eval(car(lst))); });
 
 // ====================================================================== //
 // Builtin functions / Operators
@@ -508,33 +582,24 @@ function dir(obj) {
 // Test
 // ====================================================================== //
 
-var checker = (function () {
-                   var p = new Parser();
+var ev = (function () {
+              var p = new Parser();
 
-                   return function (str) {
-                       return tos(Eval(p.parse(str)));
-                   };
-               })();
+              return function (str) {
+                  return Eval(p.parse(str));
+              };
+          })();
 
-// ;; (equal
-// ;;  '(:a (:b :c))
-// ;;  '(:a . ((:b :c) . nil)))
-// ;; => t
+function checker (str) { return tos(ev(str)); }
 
 function assert(result, exp) {
     if (equal(exp, result))
         print("=> Test passed");
     else
-        print("=> expects " + exp + " but got " + result);
+        print("=> expects " + tos(exp) + " but got " + tos(result));
 }
 
-var evs = (function () {
-               var parser = new Parser();
+assert(ev("()"), nil);
+assert(ev("1"), createNumber(1));
 
-               return function evs(str) {
-                   return Eval(parser.parse(str));
-               };
-           })();
 
-assert(evs("()"), nil);
-assert(evs("1"), createNumber(1));
