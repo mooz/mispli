@@ -564,6 +564,17 @@ special('defun', function (lst) {
             return nil;
         });
 
+special('let', function (lst) {
+            var vlist = listToArray(car(lst));
+            var body  = cdr(lst);
+
+            var vars = vlist.map(car);
+            var vals = vlist.map(cadr).map(Eval);
+
+            return evalFunction(cons(createSymbol('lambda'), cons(arrayToList(vars), body)),
+                                arrayToList(vals));
+        });
+
 // ====================================================================== //
 // Special forms / Control Structures
 // ====================================================================== //
