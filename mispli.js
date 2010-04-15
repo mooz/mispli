@@ -457,36 +457,50 @@ function evalFunction(func, args) {
     return val;
 }
 
+function validateFunction(func) {
+    if (!equal(car(func), lambda) || !listToArray(cadr(func)).every(function (e) {
+                                                                        print("checking [" + tos(e) + "] => " + symbolp(e));
+                                                                        return symbolp(e);
+                                                                    }))
+        throw "invalid function " + tos(sym);
+}
+
 function Eval(form) {
-    if (form instanceof Array)
+    if (consp(form))
     {
         var sym  = car(form);
         var args = cdr(form);
 
-        // if (sym instanceof Array)
-        // direct lambda call like ((lambda (a) a) 1) is not implemented yet.
+        if (consp(sym) && equal(car(sym), lambda))
+        {
+            print(tos(sym));
+            validateFunction(sym);
+            return evalFunction(sym, listToArray(args).map(Eval));
+        }
 
         if (sym.type !== ATOM_SYMBOL)
             throw tos(sym) + " is not a function";
 
         if (sym.name in specials)
+        {
+            // special form
             return specials[sym.name](args, form);
+        }
         else
         {
-            var evaledArgs = listToArray(args).map(Eval);
             var symInEnv;
 
             if (sym.name in builtins)
-                return builtins[sym.name].apply(null, evaledArgs);
+            {
+                // built-in function
+                return builtins[sym.name].apply(null, listToArray(args).map(Eval));
+            }
             else if ((symInEnv = findSymbol(sym.name, SYM_FUNCTION)))
             {
-                // function
+                // lisp function
                 var func = getSymbolValue(symInEnv, SYM_FUNCTION);
-
-                if (car(func).name !== 'lambda')
-                    throw "invalid function " + tos(sym);
-
-                return evalFunction(func, evaledArgs);
+                validateFunction(func);
+                return evalFunction(func, listToArray(args).map(Eval));
             }
             else
                 throw "void function " + tos(sym);
