@@ -435,8 +435,7 @@ Parser.prototype = {
 // ====================================================================== //
 
 function evalFunction(func, args) {
-    // func => [lambda, [  [arg1, [arg2, nil]], [body]]]
-    var body = cddr(func);
+    var body  = cddr(func);
     var pargs = listToArray(cadr(func));
 
     if (args.length !== pargs.length)
@@ -604,36 +603,35 @@ special('defun', function (lst) {
         });
 
 special('let', function (lst) {
-    // func => [lambda, [  [arg1, [arg2, nil]], [body]]]
-    var body = cddr(func);
-    var pargs = listToArray(cadr(func));
-
-    if (args.length !== pargs.length)
-        throw "wrong number of arguments";
-
-    var env = {};
-
-    for (var i = 0; i < pargs.length; ++i)
-    {
-        var sym = intern(pargs[i].name, env);
-        setSymbolValue(sym, SYM_VARIABLE, args[i]);
-    }
-
-    envs.push(env);
-    var val = Eval(cons(progn, body));
-    envs.pop();
-
-    return val;
-});
-
-special('let', function (lst) {
             var vlist = listToArray(car(lst));
             var body  = cdr(lst);
 
             var vars = vlist.map(car);
-            var vals = vlist.map(cadr).map(Eval);
+            var vals = vlist.map(cadr);
 
-            return evalFunction(cons(lambda, cons(arrayToList(vars), body)), vals);
+            return evalFunction(cons(lambda, cons(arrayToList(vars), body)), vals.map(Eval));
+        });
+
+special('let*', function (lst) {
+            var vlist = listToArray(car(lst));
+            var body  = cdr(lst);
+
+            var vars = vlist.map(car);
+            var vals = vlist.map(cadr);
+
+            var env = {};
+            envs.push(env);
+
+            for (var i = 0; i < vars.length; ++i)
+            {
+                var sym = intern(vars[i].name, env);
+                setSymbolValue(sym, SYM_VARIABLE, Eval(vals[i]));
+            }
+
+            var val = Eval(cons(progn, body));
+            envs.pop();
+
+            return val;
         });
 
 special('lambda', function (lst, form) { return form; });
@@ -791,11 +789,7 @@ builtin('print', function (v) { print(tos(v)); return v; });
 // ====================================================================== //
 
 if (typeof window !== "undefined")
-{
-    window.print = function (str) {
-        Application.console.log(str);
-    };
-}
+    window.print = Application.console.log;
 
 function dir(obj) {
     for (k in obj)
@@ -803,18 +797,19 @@ function dir(obj) {
 }
 
 // ====================================================================== //
+// LISP Codes
+// ====================================================================== //
+
+var evalLisp = (function () {
+                    var p = new Parser();
+                    return function (str) { Eval(p.parse(str)); };
+                }());
+
+// ====================================================================== //
 // Test
 // ====================================================================== //
 
-var ev = (function () {
-              var p = new Parser();
-
-              return function (str) {
-                  return Eval(p.parse(str));
-              };
-          })();
-
-function checker (str) { return tos(ev(str)); }
+function checker(str) { return tos(evalLisp(str)); }
 
 function assert(result, exp) {
     if (equal(exp, result))
@@ -822,13 +817,6 @@ function assert(result, exp) {
     else
         print("=> expects " + tos(exp) + " but got " + tos(result));
 }
-
-// assert(ev("()"), nil);
-// assert(ev("1"), createNumber(1));
-
-// checker("(progn (setq i 10) (while (> i 0) (print i) (setq i (1- i))))");
-
-// checker("(progn (let ((a 1) (c 2)) (print a) (print c)) (print a))");
 
 // ====================================================================== //
 // REPL (For spidermonkey)
@@ -843,7 +831,7 @@ if (typeof readline === "function")
             print("=> " + checker(input));
         } catch (x) {
             if (x.stack)
-                print("js error ::\n" + x.stack);
+                print("js error ::\n" + x.message + x.stack);
             else
                 print("error :: " + x);
         }
