@@ -259,7 +259,7 @@ function eq(a, b) {
 function isNil(x)   { return x === nil; }
 function isTrue (x) { return !isNil(x); }
 
-function symbolp(x) { return x.type === ATOM_SYMBOL || isNil(x) || isTrue(x); }
+function symbolp(x) { return x.type === ATOM_SYMBOL || isNil(x); }
 function numberp(x) { return x.type === ATOM_NUMBER; }
 function stringp(x) { return x.type === ATOM_STRING; }
 function listp(x)   { return isNil(x) || x instanceof Array; }
