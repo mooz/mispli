@@ -189,18 +189,20 @@ function tos(elem, omitParen) {
         return omitParen ? center : "(" + center + ")";
     }
 
-    switch (elem.type)
+    if (elem && elem.type)
     {
-    case ATOM_SYMBOL:
-        return elem.name;
-        break;
-    case ATOM_STRING:
-        return "\"" + elem.value + "\"";
-        break;
-    case ATOM_NUMBER:
-        return elem.value;
-        break;
+        switch (elem.type)
+        {
+        case ATOM_SYMBOL:
+            return elem.name;
+        case ATOM_STRING:
+            return "\"" + elem.value + "\"";
+        case ATOM_NUMBER:
+            return elem.value;
+        }
     }
+
+    return "tos : Non LISP object passed. It's value is `" + elem + "'";
 }
 
 function listToArray(lst) {
@@ -278,11 +280,19 @@ function consp(x)   { return listp(x) && !isNil(x); }
 // Basic functions for list processing
 // ====================================================================== //
 
-function setCar(lst, val)  { return lst[0] = val; }
-function setCdr(lst, val)  { return lst[1] = val; }
+function setCar(cell, val)  { return cell[0] = val; }
+function setCdr(cell, val)  { return cell[1] = val; }
 
-function car(lst)  { return isNil(lst) ? nil : lst[0]; }
-function cdr(lst)  { return isNil(lst) ? nil : lst[1]; }
+function car(lst)  {
+    if (!listp(lst))
+        throw "wrong type argument listp " + tos(lst);
+    return isNil(lst) ? nil : lst[0];
+}
+function cdr(lst)  {
+    if (!listp(lst))
+        throw "wrong type argument listp " + tos(lst);
+    return isNil(lst) ? nil : lst[1];
+}
 
 function caar(lst) { return car(car(lst)); }
 function cadr(lst) { return car(cdr(lst)); }
@@ -291,21 +301,45 @@ function cddr(lst) { return cdr(cdr(lst)); }
 
 function cons(a, b) { return [a, b]; };
 
+function tail(lst) {
+    while (!isNil(cdr(lst)))
+        lst = cdr(lst);
+    return lst;
+}
+
+function list() {
+    var lst = nil;
+    for (var i = arguments.length - 1; i >= 0; --i)
+        lst = cons(arguments[i], lst);
+    return lst;
+}
+
 function append() {
-    for (var i = 0; i < arguments.length; ++i)
+    var newList = [];
+    var lst;
+
+    for (var i = 0; i < arguments.length - 1; ++i)
     {
         if (!listp(arguments[i]))
-            throw "append : wrong type argument";
+            throw "append : wrong type argument " + tos(arguments[i]);
 
-        var lst = arguments[i];
+        lst = arguments[i];
 
         while (isTrue(cdr(lst)))
+        {
+            newList.push(car(lst));
             lst = cdr(lst);
+        }
 
-        setCdr(lst, arguments[i + 1] || nil);
+        if (isTrue(car(lst)))
+            newList.push(car(lst));
     }
 
-    return arguments[0];
+    newList = arrayToList(newList);
+
+    if (isTrue(newList))
+        return setCdr(tail(newList), arguments[i]), newList;
+    return arguments[i];
 };
 
 // ====================================================================== //
@@ -315,19 +349,28 @@ function append() {
 function Parser() {}
 
 Parser.prototype = {
-    parse: function (str) {
+    parse: function (str, multi) {
         this.i    = 0;
         this.str  = str;
         this.slen = str.length;
 
-        var val;
-        while (!this.eos())
+        if (multi)
         {
-            this.skip();
-            val = this.parseElement();
+            var forms = [];
+            while (!this.eos())
+            {
+                this.skip();
+                forms.push(this.parseElement());
+            }
+
+            return forms;
         }
 
-        return val;
+        this.skip();
+        var form = this.parseElement();
+        if (!this.eos())
+            throw "Parse Error";
+        return form;
     },
 
     eos: function () {
@@ -441,19 +484,23 @@ Parser.prototype = {
 // Evaluation
 // ====================================================================== //
 
-function evalFunction(func, args) {
-    var body  = cddr(func);
-    var pargs = listToArray(cadr(func));
+function evalFunction(func, vals) { // argumentss with keywords
+    var body = cddr(func);
+    var args = listToArray(cadr(func));
+    var processed = processArgKeywords(args, vals);
 
-    if (args.length !== pargs.length)
+    args = processed.args;
+    vals = processed.vals;
+
+    if (args.length !== vals.length)
         throw "wrong number of arguments";
 
     var env = {};
 
-    for (var i = 0; i < pargs.length; ++i)
+    for (var i = 0; i < args.length; ++i)
     {
-        var sym = intern(pargs[i].name, env);
-        setSymbolValue(sym, SYM_VARIABLE, args[i]);
+        var sym = intern(args[i].name, env);
+        setSymbolValue(sym, SYM_VARIABLE, vals[i]);
     }
 
     var error;
@@ -473,6 +520,52 @@ function evalFunction(func, args) {
 function validateFunction(func) {
     if (!equal(car(func), symLambda) || !listToArray(cadr(func)).every(symbolp))
         throw "invalid function " + tos(sym);
+}
+
+function processArgKeywords(args, vals) {
+    var pArgs = [];
+    var pVals = [];
+
+    for (var i = 0, j = 0; i < args.length; ++i, ++j)
+    {
+        if (equal(args[i], symOptional))
+        {
+            if (!args[i + 1])
+                throw "missing argument name for &optional";
+            pArgs.push(args[i + 1]);
+            pVals.push(vals[j] || nil);
+            i++;
+            continue;
+        }
+        else if (equal(args[i], symRest))
+        {
+            // where function (foo (x &rest r) ...) given,
+            // (foo :a)       ; r <= nil
+            // (foo :a :b)    ; r <= (:b)
+            // (foo :a :b :c) ; r <= (:b :c)
+
+            if (!args[i + 1])
+                throw "missing argument name for &rest";
+            pArgs.push(args[i + 1]);
+            pVals.push(list.apply(null, vals.slice(j)));
+            break;
+        }
+        else
+        {
+            if (!vals[j])
+                throw "wrong number of arguments";
+
+            pArgs.push(args[i]);
+            pVals.push(vals[j]);
+        }
+    }
+
+    // function s(str) { return tos(str); }
+
+    // print("args : " + pArgs.map(s).join(", "));
+    // print("vals : " + pVals.map(s).join(", "));
+
+    return { args: pArgs, vals: pVals };
 }
 
 function Eval(form) {
@@ -783,12 +876,9 @@ builtin('cadr', cadr);
 builtin('cdar', cdar);
 builtin('cddr', cddr);
 
-builtin('list', function () {
-            var lst = nil;
-            for (var i = arguments.length - 1; i >= 0; --i)
-                lst = cons(arguments[i], lst);
-            return lst;
-        });
+builtin('list', list);
+builtin('tail', tail);
+builtin('append', append);
 
 // ====================================================================== //
 // Builtin functions / Operators
@@ -849,20 +939,27 @@ function dir(obj) {
         print(k + " : " + obj[k]);
 }
 
+function printa(atom) { print(tos(atom)); }
+
 // ====================================================================== //
 // LISP Codes
 // ====================================================================== //
 
 var evalLisp = (function () {
                     var p = new Parser();
-                    return function (str) { return Eval(p.parse(str)); };
+                    return function (str) { return p.parse(str, true).map(Eval); };
                 }());
+
+function evalLispString(str) {
+    return evalLisp(str).map(function (str) { return tos(str); }).join("\n");
+}
+
+evalLisp("(defmacro when (cond &rest body) (list 'if cond (cons 'progn body)))");
+evalLisp("(defmacro unless (cond &rest body) (cons 'if (cons cond (cons nil body))))");
 
 // ====================================================================== //
 // Test
 // ====================================================================== //
-
-function checker(str) { return tos(evalLisp(str)); }
 
 function assert(result, exp) {
     if (equal(exp, result))
@@ -881,7 +978,9 @@ if (typeof readline === "function")
     while ((input = readline()) !== null)
     {
         try {
-            print("=> " + checker(input));
+            evalLisp(input).map(function (result) { return tos(result); }).forEach(
+                function (str) { print("=> " + str); }
+            );
         } catch (x) {
             if (x.stack)
                 print("js error ::\n" + x + "\n" + x.stack);
