@@ -802,7 +802,7 @@ function dir(obj) {
 
 var evalLisp = (function () {
                     var p = new Parser();
-                    return function (str) { Eval(p.parse(str)); };
+                    return function (str) { return Eval(p.parse(str)); };
                 }());
 
 // ====================================================================== //
@@ -831,7 +831,7 @@ if (typeof readline === "function")
             print("=> " + checker(input));
         } catch (x) {
             if (x.stack)
-                print("js error ::\n" + x.message + x.stack);
+                print("js error ::\n" + x + "\n" + x.stack);
             else
                 print("error :: " + x);
         }
