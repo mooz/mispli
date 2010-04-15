@@ -62,13 +62,7 @@ function setSymbolValue(symbol, type, value) {
 
 function hasSymbolType(symbol, type) {
     if (symbol.type !== ATOM_SYMBOL)
-    {
-        dir(symbol);
         throw "Non symbol value passed";
-    }
-
-    if (!symbol.type)
-        return false;
 
     switch (type)
     {
@@ -974,9 +968,59 @@ function assert(result, exp) {
 
 if (typeof readline === "function")
 {
+    print("MispLi 0.0.1");
+    print("Input Lisp codes and press Enter to evaluate.");
+    print("Type \\? to see available commands.");
+
     var input;
     while ((input = readline()) !== null)
     {
+        if (input[0] === "\\" && input.length <= 2)
+        {
+            var commands = {
+                "?" : ["Display this help", function () {
+                           print("<<< COMMANDS >>>");
+                           for (var k in commands)
+                               print("\\" + k + "\t" + commands[k][0]);
+                       }],
+                "b" : ["Show builtin functions", function () { for (var k in builtins) print(k); }],
+                "m" : ["Show macros", function () { for (var k in macros) print(k); }],
+                "s" : ["Show special forms", function () { for (var k in specials) print(k); }],
+                "f" : ["Show global functions", function () {
+                           for (var k in genv)
+                           {
+                               var sym = genv[k];
+                               if (hasSymbolType(sym, SYM_FUNCTION))
+                                   print(sym.name + "\t" + tos(getSymbolValue(sym, SYM_FUNCTION)));
+                           }
+                       }],
+                "v" : ["Show global variables", function () {
+                           for (var k in genv)
+                           {
+                               var sym = genv[k];
+                               if (hasSymbolType(sym, SYM_VARIABLE))
+                                   print(sym.name + "\t" + tos(getSymbolValue(sym, SYM_VARIABLE)));
+                           }
+                       }],
+                "j" : ["Evaluate JavaScript Code", function () {
+                           print("Input JavaScript Code");
+                           try {
+                               print(">> " + eval(readline()));
+                           } catch (x) {
+                               print(x);
+                           }
+                       }]
+            };
+
+            print("------------------------------------------------------------");
+
+            (commands[input[1]] || commands["?"])[1]();
+
+            print("------------------------------------------------------------");
+
+            continue;
+        }
+
         try {
             evalLisp(input).map(function (result) { return tos(result); }).forEach(
                 function (str) { print("=> " + str); }
