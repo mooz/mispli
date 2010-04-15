@@ -166,23 +166,27 @@ var nil = intern("nil");
 setSymbolValue(nil, SYM_CONSTANT, nil);
 
 // often used symbols (not interned)
-var lambda = createSymbol('lambda');
-var progn  = createSymbol('progn');
-var quote  = createSymbol('quote');
-
-var keyword_rest   = createSymbol('&rest');
+var symLambda   = createSymbol('lambda');
+var symProgn    = createSymbol('progn');
+var symQuote    = createSymbol('quote');
+var symRest     = createSymbol('&rest');
+var symOptional = createSymbol('&optional');
+var symKey      = createSymbol('&key');
 
 // ====================================================================== //
 // Atom, Symbol / Utils
 // ====================================================================== //
 
-function tos(elem) {
+function tos(elem, omitParen) {
     if (elem instanceof Array)
     {
-        var a = tos(car(elem));
-        var b = tos(cdr(elem));
-        return "(" + a + " . " + b + ")";
-        // return "(" + a + (listp(cdr(elem)) ? " " : " . ") + b + ")";
+        var a    = tos(car(elem));
+        var rest = cdr(elem);
+        var b    = tos(rest, listp(rest));
+
+        var center = isNil(rest) ? a : a + (listp(rest) ? " " : " . ") + b;
+
+        return omitParen ? center : "(" + center + ")";
     }
 
     switch (elem.type)
@@ -357,7 +361,7 @@ Parser.prototype = {
         if (current === "'")
         {
             this.getCurrent();
-            return cons(quote, cons(this.parseElement(), nil));
+            return cons(symQuote, cons(this.parseElement(), nil));
         }
 
         if (current === "(")
@@ -455,7 +459,7 @@ function evalFunction(func, args) {
     var error;
     envs.push(env);
     try {
-        var val = Eval(cons(progn, body));
+        var val = Eval(cons(symProgn, body));
     } catch (x) {
         error = x;
     }
@@ -467,7 +471,7 @@ function evalFunction(func, args) {
 }
 
 function validateFunction(func) {
-    if (!equal(car(func), lambda) || !listToArray(cadr(func)).every(symbolp))
+    if (!equal(car(func), symLambda) || !listToArray(cadr(func)).every(symbolp))
         throw "invalid function " + tos(sym);
 }
 
@@ -477,7 +481,7 @@ function Eval(form) {
         var sym  = car(form);
         var args = cdr(form);
 
-        if (consp(sym) && equal(car(sym), lambda))
+        if (consp(sym) && equal(car(sym), symLambda))
         {
             validateFunction(sym);
             return evalFunction(sym, listToArray(args).map(Eval));
@@ -613,7 +617,7 @@ special('defun', function (lst) {
             var pargs = cadr(lst);
             var body  = cddr(lst);
 
-            var func = cons(lambda, cons(pargs, body));
+            var func = cons(symLambda, cons(pargs, body));
             setFunc(name, func);
 
             return nil;
@@ -626,7 +630,7 @@ special('let', function (lst) {
             var vars = vlist.map(car);
             var vals = vlist.map(cadr);
 
-            return evalFunction(cons(lambda, cons(arrayToList(vars), body)), vals.map(Eval));
+            return evalFunction(cons(symLambda, cons(arrayToList(vars), body)), vals.map(Eval));
         });
 
 special('let*', function (lst) {
@@ -644,7 +648,7 @@ special('let*', function (lst) {
 
             var error;
             try {
-                var val = Eval(cons(progn, body));
+                var val = Eval(cons(symProgn, body));
             } catch (x) {
                 error = x;
             }
@@ -729,7 +733,7 @@ special('defmacro', function (lst) {
             var pargs = cadr(lst);
             var body  = cddr(lst);
 
-            setMacro(name, cons(lambda, cons(pargs, body)));
+            setMacro(name, cons(symLambda, cons(pargs, body)));
 
             return nil;
         });
