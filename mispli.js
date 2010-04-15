@@ -170,6 +170,8 @@ var lambda = createSymbol('lambda');
 var progn  = createSymbol('progn');
 var quote  = createSymbol('quote');
 
+var keyword_rest   = createSymbol('&rest');
+
 // ====================================================================== //
 // Atom, Symbol / Utils
 // ====================================================================== //
@@ -450,10 +452,17 @@ function evalFunction(func, args) {
         setSymbolValue(sym, SYM_VARIABLE, args[i]);
     }
 
+    var error;
     envs.push(env);
-    var val = Eval(cons(progn, body));
+    try {
+        var val = Eval(cons(progn, body));
+    } catch (x) {
+        error = x;
+    }
     envs.pop();
 
+    if (error)
+        throw error;
     return val;
 }
 
@@ -631,14 +640,18 @@ special('let*', function (lst) {
             envs.push(env);
 
             for (var i = 0; i < vars.length; ++i)
-            {
-                var sym = intern(vars[i].name, env);
-                setSymbolValue(sym, SYM_VARIABLE, Eval(vals[i]));
-            }
+                setSymbolValue(intern(vars[i].name, env), SYM_VARIABLE, Eval(vals[i]));
 
-            var val = Eval(cons(progn, body));
+            var error;
+            try {
+                var val = Eval(cons(progn, body));
+            } catch (x) {
+                error = x;
+            }
             envs.pop();
 
+            if (error)
+                throw error;
             return val;
         });
 
@@ -765,6 +778,13 @@ builtin('caar', caar);
 builtin('cadr', cadr);
 builtin('cdar', cdar);
 builtin('cddr', cddr);
+
+builtin('list', function () {
+            var lst = nil;
+            for (var i = arguments.length - 1; i >= 0; --i)
+                lst = cons(arguments[i], lst);
+            return lst;
+        });
 
 // ====================================================================== //
 // Builtin functions / Operators
