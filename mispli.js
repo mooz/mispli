@@ -842,7 +842,10 @@ if (typeof readline === "function")
         try {
             print("=> " + checker(input));
         } catch (x) {
-            print("error :: " + x);
+            if (x.stack)
+                print("js error ::\n" + x.stack);
+            else
+                print("error :: " + x);
         }
     }
 }
