@@ -13,6 +13,7 @@ var genv     = {};
 var envs     = [];
 var builtins = {};
 var specials = {};
+var macros   = {};
 
 // ====================================================================== //
 // Atom, Symbol
@@ -483,16 +484,23 @@ function Eval(form) {
         }
         else
         {
-            var symInEnv;
-
-            if (sym.name in builtins)
+            // macro
+            if (sym.name in macros)
             {
-                // built-in function
-                return builtins[sym.name].apply(null, listToArray(args).map(Eval));
+                print("before   --> " + tos(macros[sym.name]));
+                var expanded = evalFunction(macros[sym.name], listToArray(args));
+                print("expanded --> " + tos(expanded));
+                return Eval(expanded);
             }
-            else if ((symInEnv = findSymbol(sym.name, SYM_FUNCTION)))
+
+            // built-in function
+            if (sym.name in builtins)
+                return builtins[sym.name].apply(null, listToArray(args).map(Eval));
+
+            // lisp function
+            var symInEnv;
+            if ((symInEnv = findSymbol(sym.name, SYM_FUNCTION)))
             {
-                // lisp function
                 var func = getSymbolValue(symInEnv, SYM_FUNCTION);
                 validateFunction(func);
                 return evalFunction(func, listToArray(args).map(Eval));
@@ -689,6 +697,27 @@ special('or', function (lst) {
             for (var i = 0; i < conditions.length; ++i)
                 if (isTrue(v = Eval(conditions[i])))
                     return v;
+            return nil;
+        });
+
+// ====================================================================== //
+// Macros
+// ====================================================================== //
+
+function setMacro(atom, macro) {
+    if (!symbolp(atom))
+        throw "wrong type symbolp" + tos(atom);
+    macros[atom.name] = macro;
+    return macro;
+}
+
+special('defmacro', function (lst) {
+            var name  = car(lst);
+            var pargs = cadr(lst);
+            var body  = cddr(lst);
+
+            setMacro(name, cons(lambda, cons(pargs, body)));
+
             return nil;
         });
 
