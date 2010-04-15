@@ -166,6 +166,8 @@ setSymbolValue(nil, SYM_CONSTANT, nil);
 
 // often used symbols (not interned)
 var lambda = createSymbol('lambda');
+var progn  = createSymbol('progn');
+var quote  = createSymbol('quote');
 
 // ====================================================================== //
 // Atom, Symbol / Utils
@@ -349,9 +351,13 @@ Parser.prototype = {
     parseElement: function () {
         var current = this.peekCurrent();
 
-        if (current === "'" && this.peekNext() === "(")
-            return this.getCurrent(), [createSymbol('quote'), [this.parseList(), nil]];
-        else if (current === "(")
+        if (current === "'")
+        {
+            this.getCurrent();
+            return cons(quote, cons(this.parseElement(), nil));
+        }
+
+        if (current === "(")
             return this.parseList();
         else if (current === "\"")
             return this.parseString();
@@ -445,7 +451,7 @@ function evalFunction(func, args) {
     }
 
     envs.push(env);
-    var val = Eval(cons(createSymbol('progn'), body));
+    var val = Eval(cons(progn, body));
     envs.pop();
 
     return val;
@@ -464,7 +470,7 @@ function Eval(form) {
             throw tos(sym) + " is not a function";
 
         if (sym.name in specials)
-            return specials[sym.name](args);
+            return specials[sym.name](args, form);
         else
         {
             var evaledArgs = listToArray(args).map(Eval);
@@ -583,8 +589,32 @@ special('defun', function (lst) {
 
             var func = cons(lambda, cons(pargs, body));
             setFunc(name, func);
+
             return nil;
         });
+
+special('let', function (lst) {
+    // func => [lambda, [  [arg1, [arg2, nil]], [body]]]
+    var body = cddr(func);
+    var pargs = listToArray(cadr(func));
+
+    if (args.length !== pargs.length)
+        throw "wrong number of arguments";
+
+    var env = {};
+
+    for (var i = 0; i < pargs.length; ++i)
+    {
+        var sym = intern(pargs[i].name, env);
+        setSymbolValue(sym, SYM_VARIABLE, args[i]);
+    }
+
+    envs.push(env);
+    var val = Eval(cons(progn, body));
+    envs.pop();
+
+    return val;
+});
 
 special('let', function (lst) {
             var vlist = listToArray(car(lst));
@@ -595,6 +625,8 @@ special('let', function (lst) {
 
             return evalFunction(cons(lambda, cons(arrayToList(vars), body)), vals);
         });
+
+special('lambda', function (lst, form) { return form; });
 
 // ====================================================================== //
 // Special forms / Control Structures
@@ -614,8 +646,7 @@ special('if', function (lst) {
             for (var i = 0; i < fform.length; ++i)
                 val = Eval(fform[i]);
             return val;
-        }
-       );
+        });
 
 special('while', function (lst) {
             var test = car(lst);
@@ -624,7 +655,7 @@ special('while', function (lst) {
             while (isTrue(Eval(test)))
                 for (var i = 0; i < body.length; ++i)
                     Eval(body[i]);
-            return t;
+            return nil;
         });
 
 special('progn', function (lst) {
@@ -782,9 +813,26 @@ function assert(result, exp) {
         print("=> expects " + tos(exp) + " but got " + tos(result));
 }
 
-assert(ev("()"), nil);
-assert(ev("1"), createNumber(1));
+// assert(ev("()"), nil);
+// assert(ev("1"), createNumber(1));
 
-checker("(progn (setq i 10) (while (> i 0) (print i) (setq i (1- i))))");
+// checker("(progn (setq i 10) (while (> i 0) (print i) (setq i (1- i))))");
 
-checker("(progn (let ((a 1) (c 2)) (print a) (print c)) (print a))");
+// checker("(progn (let ((a 1) (c 2)) (print a) (print c)) (print a))");
+
+// ====================================================================== //
+// REPL (For spidermonkey)
+// ====================================================================== //
+
+if (typeof readline === "function")
+{
+    var input;
+    while ((input = readline()) !== null)
+    {
+        try {
+            print("=> " + checker(input));
+        } catch (x) {
+            print("error :: " + x);
+        }
+    }
+}
