@@ -337,15 +337,15 @@ Parser.prototype = {
     },
 
     getCurrent: function () {
-        return this.str[this.i++];
+        return this.str.charAt(this.i++);
     },
 
     peekCurrent: function () {
-        return this.str[this.i];
+        return this.str.charAt(this.i);
     },
 
     peekNext: function () {
-        return this.str[this.i + 1];
+        return this.str.charAt(this.i + 1);
     },
 
     parseElement: function () {
@@ -458,10 +458,7 @@ function evalFunction(func, args) {
 }
 
 function validateFunction(func) {
-    if (!equal(car(func), lambda) || !listToArray(cadr(func)).every(function (e) {
-                                                                        print("checking [" + tos(e) + "] => " + symbolp(e));
-                                                                        return symbolp(e);
-                                                                    }))
+    if (!equal(car(func), lambda) || !listToArray(cadr(func)).every(symbolp))
         throw "invalid function " + tos(sym);
 }
 
@@ -473,7 +470,6 @@ function Eval(form) {
 
         if (consp(sym) && equal(car(sym), lambda))
         {
-            print(tos(sym));
             validateFunction(sym);
             return evalFunction(sym, listToArray(args).map(Eval));
         }
