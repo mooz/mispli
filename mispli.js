@@ -164,6 +164,9 @@ setSymbolValue(t, SYM_CONSTANT, t);
 var nil = intern("nil");
 setSymbolValue(nil, SYM_CONSTANT, nil);
 
+// often used symbols (not interned)
+var lambda = createSymbol('lambda');
+
 // ====================================================================== //
 // Atom, Symbol / Utils
 // ====================================================================== //
@@ -578,7 +581,7 @@ special('defun', function (lst) {
             var pargs = cadr(lst);
             var body  = cddr(lst);
 
-            var func = cons(createSymbol('lambda'), cons(pargs, body));
+            var func = cons(lambda, cons(pargs, body));
             setFunc(name, func);
             return nil;
         });
@@ -590,75 +593,65 @@ special('let', function (lst) {
             var vars = vlist.map(car);
             var vals = vlist.map(cadr).map(Eval);
 
-            return evalFunction(cons(createSymbol('lambda'), cons(arrayToList(vars), body)), vals);
+            return evalFunction(cons(lambda, cons(arrayToList(vars), body)), vals);
         });
 
 // ====================================================================== //
 // Special forms / Control Structures
 // ====================================================================== //
 
-special(
-    'if',
-    function (lst) {
-        var test  = car(lst);
-        var tform = cadr(lst);
-        var fform = cddr(lst);
+special('if', function (lst) {
+            var test  = car(lst);
+            var tform = cadr(lst);
+            var fform = cddr(lst);
 
-        if (isTrue(Eval(test)))
-            return Eval(tform);
+            if (isTrue(Eval(test)))
+                return Eval(tform);
 
-        fform = listToArray(fform);
+            fform = listToArray(fform);
 
-        var val = nil;
-        for (var i = 0; i < fform.length; ++i)
-            val = Eval(fform[i]);
-        return val;
-    }
-);
+            var val = nil;
+            for (var i = 0; i < fform.length; ++i)
+                val = Eval(fform[i]);
+            return val;
+        }
+       );
 
-special(
-    'while',
-    function (lst) {
-        var test = car(lst);
-        var body = cdr(lst);
-        body = listToArray(body);
-        while (isTrue(Eval(test)))
+special('while', function (lst) {
+            var test = car(lst);
+            var body = cdr(lst);
+            body = listToArray(body);
+            while (isTrue(Eval(test)))
+                for (var i = 0; i < body.length; ++i)
+                    Eval(body[i]);
+            return t;
+        });
+
+special('progn', function (lst) {
+            var body = listToArray(lst);
+            var val = nil;
             for (var i = 0; i < body.length; ++i)
-                Eval(body[i]);
-        return t;
-    });
+                val = Eval(body[i]);
+            return val;
+        });
 
-special(
-    'progn',
-    function (lst) {
-        var body = listToArray(lst);
-        var val = nil;
-        for (var i = 0; i < body.length; ++i)
-            val = Eval(body[i]);
-        return val;
-    });
+special('and', function (lst) {
+            var conditions = listToArray(lst);
+            var v;
+            for (var i = 0; i < conditions.length; ++i)
+                if (isNil(v = Eval(conditions[i])))
+                    return nil;
+            return v;
+        });
 
-special(
-    'and',
-    function (lst) {
-        var conditions = listToArray(lst);
-        var v;
-        for (var i = 0; i < conditions.length; ++i)
-            if (isNil(v = Eval(conditions[i])))
-                return nil;
-        return v;
-    });
-
-special(
-    'or',
-    function (lst) {
-        var conditions = listToArray(lst);
-        var v;
-        for (var i = 0; i < conditions.length; ++i)
-            if (isTrue(v = Eval(conditions[i])))
-                return v;
-        return nil;
-    });
+special('or', function (lst) {
+            var conditions = listToArray(lst);
+            var v;
+            for (var i = 0; i < conditions.length; ++i)
+                if (isTrue(v = Eval(conditions[i])))
+                    return v;
+            return nil;
+        });
 
 // ====================================================================== //
 // Builtin functions
