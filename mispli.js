@@ -265,7 +265,7 @@ function stringp(x) { return x.type === ATOM_STRING; }
 function listp(x)   { return isNil(x) || x instanceof Array; }
 
 function atom(x)    { return isNil(x) || symbolp(x) || numberp(x) || stringp(x); }
-function consp(x)   { return !atom(x); }
+function consp(x)   { return listp(x) && !isNil(x); }
 
 // ====================================================================== //
 // Basic functions for list processing
