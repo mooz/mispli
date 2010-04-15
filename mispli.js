@@ -379,7 +379,7 @@ Parser.prototype = {
         }
 
         if (this.getCurrent() !== ")")
-            throw "parseList : Unclosed Parenthethis";
+            throw "parseList : Unclosed Parenthesis";
 
         var slst = nil;
 
@@ -412,11 +412,11 @@ Parser.prototype = {
     },
 
     parseSymbolOrNumber: function parseSymbolOrNumber() {
-        const symbolp = /[a-zA-Z0-9*&^%$@!~_+=<>:./-]/;
+        const symbolChars = /[a-zA-Z0-9*&^%$@!~_+=<>:./-]/;
 
         var buffer = [];
 
-        while (symbolp.test(this.peekCurrent()) && !this.eos())
+        while (symbolChars.test(this.peekCurrent()) && !this.eos())
             buffer.push(this.getCurrent());
 
         if (!buffer.length)
