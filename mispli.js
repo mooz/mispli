@@ -885,8 +885,8 @@ var b2b = {
     "false" : nil
 };
 
-builtin(['eq', 'eql'], function (a, b) { return eq(a, b); });
-builtin('equal', function (a, b) { return equal(a, b); });
+builtin(['eq', 'eql'], function (a, b) { return b2b[eq(a, b)]; });
+builtin('equal', function (a, b) { return b2b[equal(a, b)]; });
 
 builtin(['null', 'not'], function (x) { return b2b[isNil(x)]; });
 builtin('symbolp', function (x) { return b2b[symbolp(x)]; });
