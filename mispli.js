@@ -415,10 +415,12 @@ Parser.prototype = {
         if (this.getCurrent() !== "(")
             throw "parseList : ParseError";
 
+        this.skip();
+
         while (this.peekCurrent() !== ")" && !this.eos())
         {
-            this.skip();
             lst.push(this.parseElement());
+            this.skip();
         }
 
         if (this.getCurrent() !== ")")
@@ -843,8 +845,8 @@ function builtin(names, func) {
 
 // boolean => boolean
 var b2b = {
-    true  : t,
-    false : nil
+    "true"  : t,
+    "false" : nil
 };
 
 builtin(['eq', 'eql'], function (a, b) { return eq(a, b); });
