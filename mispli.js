@@ -163,6 +163,7 @@ setSymbolValue(nil, SYM_CONSTANT, nil);
 var symLambda   = createSymbol('lambda');
 var symProgn    = createSymbol('progn');
 var symQuote    = createSymbol('quote');
+var symFunction = createSymbol('function');
 var symRest     = createSymbol('&rest');
 var symOptional = createSymbol('&optional');
 var symKey      = createSymbol('&key');
@@ -395,6 +396,13 @@ Parser.prototype = {
     parseElement: function () {
         var current = this.peekCurrent();
 
+        if (current === "#" && this.peekNext() === "'")
+        {
+            this.getCurrent();
+            this.getCurrent();
+            return cons(symFunction, cons(this.parseElement(), nil));
+        }
+
         if (current === "'")
         {
             this.getCurrent();
@@ -564,7 +572,13 @@ function processArgKeywords(args, vals) {
     return { args: pArgs, vals: pVals };
 }
 
+var evalDepth    = 0;
+var maxEvalDepth = 3000;
+
 function Eval(form) {
+    if (++evalDepth > maxEvalDepth)
+        throw "eval depth exceeds maxEvalDepth (" + maxEvalDepth + ")";
+
     if (consp(form))
     {
         var sym  = car(form);
@@ -675,7 +689,7 @@ function special(names, func) {
 // Special forms / Basics
 // ====================================================================== //
 
-special('quote', function (lst) { return car(lst); });
+special(['quote', 'function'], function (lst) { return car(lst); });
 
 special('set', function (lst) {
             var args = listToArray(lst);
@@ -716,8 +730,8 @@ special('let', function (lst) {
             var vlist = listToArray(car(lst));
             var body  = cdr(lst);
 
-            var vars = vlist.map(car);
-            var vals = vlist.map(cadr);
+            var vars = vlist.map(function (pair) { return listp(pair) ? car(pair)  : pair; });
+            var vals = vlist.map(function (pair) { return listp(pair) ? cadr(pair) : nil; });
 
             return evalFunction(cons(symLambda, cons(arrayToList(vars), body)), vals.map(Eval));
         });
@@ -726,8 +740,8 @@ special('let*', function (lst) {
             var vlist = listToArray(car(lst));
             var body  = cdr(lst);
 
-            var vars = vlist.map(car);
-            var vals = vlist.map(cadr);
+            var vars = vlist.map(function (pair) { return listp(pair) ? car(pair)  : pair; });
+            var vals = vlist.map(function (pair) { return listp(pair) ? cadr(pair) : nil; });
 
             var env = {};
             envs.push(env);
@@ -753,6 +767,28 @@ special('lambda', function (lst, form) { return form; });
 // ====================================================================== //
 // Special forms / Control Structures
 // ====================================================================== //
+
+special('cond', function (lst) {
+            do
+            {
+                var clause = car(lst);
+
+                if (listp(clause))
+                {
+                    var condResult;
+                    if (isTrue(condResult = Eval(car(clause))))
+                    {
+                        return isNil(cdr(clause)) ? condResult : Eval(cadr(clause));
+                    }
+                }
+                else
+                    throw "wrong type argument listp";
+
+                lst = cdr(lst);
+            } while (isTrue(clause));
+
+            return nil;
+        });
 
 special('if', function (lst) {
             var test  = car(lst);
@@ -860,6 +896,22 @@ builtin('listp', function (x) { return b2b[listp(x)]; });
 builtin('numberp', function (x) { return b2b[numberp(x)]; });
 builtin('stringp', function (x) { return b2b[stringp(x)]; });
 
+builtin('funcall', function (func) {
+            return evalFunction(func, Array.prototype.slice.call(arguments, 1));
+        });
+
+builtin('apply', function (func) {
+            var vals = Array.prototype.slice.call(arguments, 1, arguments.length - 1);
+            vals = vals.concat(listToArray(arguments[arguments.length - 1]));
+            return evalFunction(func, vals);
+        });
+
+// funcall is a built-in function in `C source code'.
+// (funcall FUNCTION &rest ARGUMENTS)
+// Call first argument as a function, passing remaining arguments to it.
+// Return the value that function returns.
+// Thus, (funcall 'cons 'x 'y) returns (x . y).
+
 // ====================================================================== //
 // Builtin functions / List processing
 // ====================================================================== //
@@ -943,7 +995,13 @@ function printa(atom) { print(tos(atom)); }
 
 var evalLisp = (function () {
                     var p = new Parser();
-                    return function (str) { return p.parse(str, true).map(Eval); };
+                    return function (str) {
+                        return p.parse(str, true).map(
+                            function (lst) {
+                                evalDepth = 0;
+                                return Eval(lst);
+                            });
+                    };
                 }());
 
 function evalLispString(str) {
