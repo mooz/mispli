@@ -201,6 +201,9 @@ function tos(elem, omitParen) {
 }
 
 function listToArray(lst) {
+    if (isNil(lst))
+        return [];
+
     for (var array = []; isTrue(cdr(lst)); lst = cdr(lst))
     {
         if (!listp(cdr(lst)))
@@ -313,6 +316,9 @@ function append() {
     var newList = [];
     var lst;
 
+    if (!arguments.length)
+        return nil;
+
     for (var i = 0; i < arguments.length - 1; ++i)
     {
         if (!listp(arguments[i]))
@@ -332,9 +338,9 @@ function append() {
 
     newList = arrayToList(newList);
 
-    if (isTrue(newList))
+    if (consp(newList))
         return setCdr(tail(newList), arguments[i]), newList;
-    return arguments[i];
+    return arguments[0];
 };
 
 // ====================================================================== //
@@ -552,6 +558,7 @@ function processArgKeywords(args, vals) {
                 throw "missing argument name for &rest";
             pArgs.push(args[i + 1]);
             pVals.push(list.apply(null, vals.slice(j)));
+            j = vals.length;
             break;
         }
         else
@@ -564,10 +571,9 @@ function processArgKeywords(args, vals) {
         }
     }
 
-    // function s(str) { return tos(str); }
-
-    // print("args : " + pArgs.map(s).join(", "));
-    // print("vals : " + pVals.map(s).join(", "));
+    // for assertArgCountA
+    while (j < vals.length)
+        pVals.push(vals[j++]);
 
     return { args: pArgs, vals: pVals };
 }
@@ -663,15 +669,30 @@ function Eval(form) {
 
 function argCount(args) {
     var count = 0;
-    while (listp(cdr(args)) && !isNil(cdr(args)))
+    while (listp(args) && !isNil(args))
         count++, args = cdr(args);
     return count;
 }
 
-function assertArgCount(args, count) {
-    if (argCount(args) !== count)
-        throw "Wrong number of arguments";
+// List
+function assertArgCountL(count, op, args) {
+    print("expects : " + count);
+    print("got     : " + argCount(args));
+    if (!op(argCount(args), count))
+        throw "wrong number of arguments";
 }
+
+// Array
+function assertArgCountA(count, op, args) {
+    if (!op(args.length, count))
+        throw "wrong number of arguments";
+}
+
+function argEq(a, b) { return a === b; }
+function argGt(a, /* than */ b)  { return a > b; }
+function argLt(a, /* than */ b)  { return a < b; }
+function argGte(a, /* than */ b) { return a >= b; }
+function argLte(a, /* than */ b) { return a <= b; }
 
 // ====================================================================== //
 // Special forms
@@ -689,26 +710,29 @@ function special(names, func) {
 // Special forms / Basics
 // ====================================================================== //
 
-special(['quote', 'function'], function (lst) { return car(lst); });
+special(['quote', 'function'], function (lst) {
+            assertArgCountL(1, argEq, lst);
+
+            return car(lst);
+        });
 
 special('set', function (lst) {
-            var args = listToArray(lst);
-            for (var i = 0; i < args.length; i += 2)
-            {
-                var sym = Eval(args[i]);
-                var val = Eval(args[i + 1]) || nil;
-                set(sym, val);
-            }
+            assertArgCountL(2, argEq, lst);
+
+            var sym = Eval(car(lst));
+            var val = Eval(cadr(lst));
+            set(sym, val);
 
             return val;
         });
 
 special('setq', function (lst) {
             var args = listToArray(lst);
+
             for (var i = 0; i < args.length; i += 2)
             {
                 var sym = args[i];
-                var val = Eval(args[i + 1]) || nil;
+                var val = Eval(args[i + 1] || nil);
                 set(sym, val);
             }
 
@@ -716,6 +740,9 @@ special('setq', function (lst) {
         });
 
 special('defun', function (lst) {
+            // (defun NAME ARGLIST [BODY ...])
+            assertArgCountL(2, argGte, lst);
+
             var name  = car(lst);
             var pargs = cadr(lst);
             var body  = cddr(lst);
@@ -727,16 +754,22 @@ special('defun', function (lst) {
         });
 
 special('let', function (lst) {
-            var vlist = listToArray(car(lst));
+            // (let VARLIST BODY...)
+            assertArgCountL(1, argGte, lst);
+
             var body  = cdr(lst);
+            var vlist = listToArray(car(lst));
 
-            var vars = vlist.map(function (pair) { return listp(pair) ? car(pair)  : pair; });
-            var vals = vlist.map(function (pair) { return listp(pair) ? cadr(pair) : nil; });
+            var vars = vlist.map(function (pair) { return listp(pair) ? car(pair) : pair; });
+            var vals = vlist.map(function (pair) { return listp(pair) ? cadr(pair) : nil; }).map(Eval);
 
-            return evalFunction(cons(symLambda, cons(arrayToList(vars), body)), vals.map(Eval));
+            return evalFunction(cons(symLambda, cons(arrayToList(vars), body)), vals);
         });
 
 special('let*', function (lst) {
+            // (let* VARLIST BODY...)
+            assertArgCountL(1, argGte, lst);
+
             var vlist = listToArray(car(lst));
             var body  = cdr(lst);
 
@@ -791,6 +824,8 @@ special('cond', function (lst) {
         });
 
 special('if', function (lst) {
+            assertArgCountL(2, argGte, lst);
+
             var test  = car(lst);
             var tform = cadr(lst);
             var fform = cddr(lst);
@@ -807,6 +842,8 @@ special('if', function (lst) {
         });
 
 special('while', function (lst) {
+            assertArgCountL(1, argGte, lst);
+
             var test = car(lst);
             var body = cdr(lst);
             body = listToArray(body);
@@ -826,7 +863,7 @@ special('progn', function (lst) {
 
 special('and', function (lst) {
             var conditions = listToArray(lst);
-            var v;
+            var v = t;
             for (var i = 0; i < conditions.length; ++i)
                 if (isNil(v = Eval(conditions[i])))
                     return nil;
@@ -835,11 +872,11 @@ special('and', function (lst) {
 
 special('or', function (lst) {
             var conditions = listToArray(lst);
-            var v;
+            var v = t;
             for (var i = 0; i < conditions.length; ++i)
                 if (isTrue(v = Eval(conditions[i])))
                     return v;
-            return nil;
+            return v;
         });
 
 // ====================================================================== //
@@ -885,47 +922,43 @@ var b2b = {
     "false" : nil
 };
 
-builtin(['eq', 'eql'], function (a, b) { return b2b[eq(a, b)]; });
-builtin('equal', function (a, b) { return b2b[equal(a, b)]; });
+builtin(['eq', 'eql'], function (a, b) { assertArgCountA(2, argEq, arguments); return b2b[eq(a, b)]; });
+builtin('equal', function (a, b) { assertArgCountA(2, argEq, arguments); return b2b[equal(a, b)]; });
 
-builtin(['null', 'not'], function (x) { return b2b[isNil(x)]; });
-builtin('symbolp', function (x) { return b2b[symbolp(x)]; });
-builtin('atom', function (x) { return b2b[atom(x)]; });
-builtin('consp', function (x) { return b2b[consp(x)]; });
-builtin('listp', function (x) { return b2b[listp(x)]; });
-builtin('numberp', function (x) { return b2b[numberp(x)]; });
-builtin('stringp', function (x) { return b2b[stringp(x)]; });
+builtin(['null', 'not'], function (x) { assertArgCountA(1, argEq, arguments); return b2b[isNil(x)]; });
+builtin('symbolp', function (x) { assertArgCountA(1, argEq, arguments); return b2b[symbolp(x)]; });
+builtin('atom', function (x) { assertArgCountA(1, argEq, arguments); return b2b[atom(x)]; });
+builtin('consp', function (x) { assertArgCountA(1, argEq, arguments); return b2b[consp(x)]; });
+builtin('listp', function (x) { assertArgCountA(1, argEq, arguments); return b2b[listp(x)]; });
+builtin('numberp', function (x) { assertArgCountA(1, argEq, arguments); return b2b[numberp(x)]; });
+builtin('stringp', function (x) { assertArgCountA(1, argEq, arguments); return b2b[stringp(x)]; });
 
 builtin('funcall', function (func) {
+            assertArgCountA(1, argGte, arguments);
             return evalFunction(func, Array.prototype.slice.call(arguments, 1));
         });
 
 builtin('apply', function (func) {
+            assertArgCountA(1, argGte, arguments);
             var vals = Array.prototype.slice.call(arguments, 1, arguments.length - 1);
             vals = vals.concat(listToArray(arguments[arguments.length - 1]));
             return evalFunction(func, vals);
         });
 
-// funcall is a built-in function in `C source code'.
-// (funcall FUNCTION &rest ARGUMENTS)
-// Call first argument as a function, passing remaining arguments to it.
-// Return the value that function returns.
-// Thus, (funcall 'cons 'x 'y) returns (x . y).
-
 // ====================================================================== //
 // Builtin functions / List processing
 // ====================================================================== //
 
-builtin('cons', cons);
-builtin('car',  car);
-builtin('cdr',  cdr);
-builtin('caar', caar);
-builtin('cadr', cadr);
-builtin('cdar', cdar);
-builtin('cddr', cddr);
+builtin('cons', function (x, y) { assertArgCountA(2, argEq, arguments); return cons; });
+builtin('car',  function (x, y) { assertArgCountA(2, argEq, arguments); return car;  });
+builtin('cdr',  function (x, y) { assertArgCountA(2, argEq, arguments); return cdr;  });
+builtin('caar', function (x, y) { assertArgCountA(2, argEq, arguments); return caar; });
+builtin('cadr', function (x, y) { assertArgCountA(2, argEq, arguments); return cadr; });
+builtin('cdar', function (x, y) { assertArgCountA(2, argEq, arguments); return cdar; });
+builtin('cddr', function (x, y) { assertArgCountA(2, argEq, arguments); return cddr; });
 
 builtin('list', list);
-builtin('tail', tail);
+builtin('tail', function (seq) { assertArgCountA(1, argEq, arguments); return tail(seq); });
 builtin('append', append);
 
 // ====================================================================== //
@@ -938,6 +971,12 @@ builtin('+', function (numbers) {
             return createNumber(v);
         });
 builtin('-', function (x, numbers) {
+            if (!arguments.length)
+                return createNumber(0);
+
+            if (arguments.length === 1)
+                return createNumber(-x.value);
+
             for (var i = 1, v = x.value; i < arguments.length; ++i)
                 v -= arguments[i].value;
             return createNumber(v);
@@ -948,32 +987,34 @@ builtin('*', function (numbers) {
             return createNumber(v);
         });
 builtin('/', function (x, divisors) {
+            assertArgCountA(2, argGte, arguments);
             for (var i = 1, v = x.value; i < arguments.length; ++i)
                 v /= arguments[i].value;
             return createNumber(v);
         });
 builtin('%', function (x, y) {
+            assertArgCountA(2, argEq, arguments);
             return createNumber(x.value % y.value);
         });
 
-builtin('1-', function (x) { return createNumber(x.value - 1); });
-builtin('1+', function (x) { return createNumber(x.value + 1); });
+builtin('1-', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(x.value - 1); });
+builtin('1+', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(x.value + 1); });
 
 // ====================================================================== //
 // Builtin functions / Operators
 // ====================================================================== //
 
-builtin('=',  function (x, y) { return b2b[x.value == y.value]; });
-builtin('<',  function (x, y) { return b2b[x.value <  y.value]; });
-builtin('<=', function (x, y) { return b2b[x.value <= y.value]; });
-builtin('>',  function (x, y) { return b2b[x.value >  y.value]; });
-builtin('>=', function (x, y) { return b2b[x.value >= y.value]; });
+builtin('=',  function (x, y) { assertArgCountA(2, argEq, arguments); return b2b[x.value == y.value]; });
+builtin('<',  function (x, y) { assertArgCountA(2, argEq, arguments); return b2b[x.value <  y.value]; });
+builtin('<=', function (x, y) { assertArgCountA(2, argEq, arguments); return b2b[x.value <= y.value]; });
+builtin('>',  function (x, y) { assertArgCountA(2, argEq, arguments); return b2b[x.value >  y.value]; });
+builtin('>=', function (x, y) { assertArgCountA(2, argEq, arguments); return b2b[x.value >= y.value]; });
 
 // ====================================================================== //
 // Builtin functions / IO
 // ====================================================================== //
 
-builtin('print', function (v) { print(tos(v)); return v; });
+builtin('print', function (v) { assertArgCountA(1, argEq, arguments); print(tos(v)); return v; });
 
 // ====================================================================== //
 // Utils
