@@ -925,7 +925,7 @@ builtin('print', function (v) { print(tos(v)); return v; });
 // Utils
 // ====================================================================== //
 
-if (typeof window !== "undefined")
+if (typeof Application !== "undefined")
     window.print = Application.console.log;
 
 function dir(obj) {
@@ -1033,3 +1033,4 @@ if (typeof readline === "function")
         }
     }
 }
+
