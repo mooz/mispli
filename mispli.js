@@ -604,7 +604,7 @@ function evalFunction(func, vals) {
 }
 
 var evalDepth    = 0;
-var maxEvalDepth = 3000;
+var maxEvalDepth = 100000;
 
 function Eval(form) {
     if (++evalDepth > maxEvalDepth)
@@ -1048,6 +1048,28 @@ builtin('>=', function (x, y) { assertArgCountA(2, argEq, arguments); return b2b
 builtin('print', function (v) { assertArgCountA(1, argEq, arguments); print(tos(v)); return v; });
 
 // ====================================================================== //
+// Misc
+// ====================================================================== //
+
+builtin('iota', function (count, from, delta) {
+            assertArgCountA(1, argGte, arguments);
+
+            count = count.value;
+
+            if (count < 0)
+                throw "negative count";
+
+            from  = (typeof from  === "undefined") ? 0 : from.value;
+            delta = (typeof delta === "undefined") ? 1 : delta.value;
+
+            var array = [createNumber(from)];
+            for (var i = 1; i < count; ++i)
+                array.push(createNumber(from += delta));
+
+            return arrayToList(array);
+        });
+
+// ====================================================================== //
 // Utils
 // ====================================================================== //
 
@@ -1093,6 +1115,15 @@ function assert(result, exp) {
     else
         print("=> expects " + tos(exp) + " but got " + tos(result));
 }
+
+var syntaxChecker =
+    (function () {
+         var p = new Parser();
+
+         return function (str) {
+             try { p.parse(str, true); return true; } catch (x) { return false; }
+         };
+     })();
 
 // ====================================================================== //
 // REPL (For spidermonkey)
