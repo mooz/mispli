@@ -130,7 +130,7 @@ function unintern(name, context) {
 
 function set(atom, value, constant, context) {
     if (!symbolp(atom))
-        throw "wrong type symbolp" + tos(atom);
+        throw "wrong type symbolp " + tos(atom);
 
     var sym = intern(atom.name, context);
 
@@ -494,44 +494,6 @@ Parser.prototype = {
 // Evaluation
 // ====================================================================== //
 
-function evalFunction(func, vals) { // argumentss with keywords
-    var body = cddr(func);
-    var args = listToArray(cadr(func));
-    var processed = processArgKeywords(args, vals);
-
-    args = processed.args;
-    vals = processed.vals;
-
-    if (args.length !== vals.length)
-        throw "wrong number of arguments";
-
-    var env = {};
-
-    for (var i = 0; i < args.length; ++i)
-    {
-        var sym = intern(args[i].name, env);
-        setSymbolValue(sym, SYM_VARIABLE, vals[i]);
-    }
-
-    var error;
-    envs.push(env);
-    try {
-        var val = Eval(cons(symProgn, body));
-    } catch (x) {
-        error = x;
-    }
-    envs.pop();
-
-    if (error)
-        throw error;
-    return val;
-}
-
-function validateFunction(func) {
-    if (!equal(car(func), symLambda) || !listToArray(cadr(func)).every(symbolp))
-        throw "invalid function " + tos(sym);
-}
-
 function processArgKeywords(args, vals) {
     var pArgs = [];
     var pVals = [];
@@ -578,6 +540,69 @@ function processArgKeywords(args, vals) {
     return { args: pArgs, vals: pVals };
 }
 
+function validateFunction(func) {
+    if (!equal(car(func), symLambda) || !listToArray(cadr(func)).every(symbolp))
+        throw "invalid function " + tos(func);
+}
+
+function evalFunction(func, vals) {
+    if (symbolp(func))
+    {
+        // macro
+        if (func.name in macros)
+        {
+            var expanded = evalFunction(macros[func.name], vals);
+            return Eval(expanded);
+        }
+
+        // built-in function
+        if (func.name in builtins)
+            return builtins[func.name].apply(null, vals.map(Eval));
+
+        // lisp function
+        var symInEnv;
+        if ((symInEnv = findSymbol(func.name, SYM_FUNCTION)))
+            func = getSymbolValue(symInEnv, SYM_FUNCTION);
+        else
+            throw "void function " + tos(func);
+
+        vals = vals.map(Eval);
+    }
+
+    validateFunction(func);
+
+    var body = cddr(func);
+    var args = listToArray(cadr(func));
+    var processed = processArgKeywords(args, vals);
+
+    args = processed.args;
+    vals = processed.vals;
+
+    if (args.length !== vals.length)
+        throw "wrong number of arguments";
+
+    var env = {};
+
+    for (var i = 0; i < args.length; ++i)
+    {
+        var sym = intern(args[i].name, env);
+        setSymbolValue(sym, SYM_VARIABLE, vals[i]);
+    }
+
+    var error;
+    envs.push(env);
+    try {
+        var val = Eval(cons(symProgn, body));
+    } catch (x) {
+        error = x;
+    }
+    envs.pop();
+
+    if (error)
+        throw error;
+    return val;
+}
+
 var evalDepth    = 0;
 var maxEvalDepth = 3000;
 
@@ -590,46 +615,19 @@ function Eval(form) {
         var sym  = car(form);
         var args = cdr(form);
 
-        if (consp(sym) && equal(car(sym), symLambda))
+        if (symbolp(sym))
         {
-            validateFunction(sym);
-            return evalFunction(sym, listToArray(args).map(Eval));
-        }
-
-        if (sym.type !== ATOM_SYMBOL)
-            throw tos(sym) + " is not a function";
-
-        if (sym.name in specials)
-        {
-            // special form
-            return specials[sym.name](args, form);
-        }
-        else
-        {
-            // macro
-            if (sym.name in macros)
-            {
-                print("before   --> " + tos(macros[sym.name]));
-                var expanded = evalFunction(macros[sym.name], listToArray(args));
-                print("expanded --> " + tos(expanded));
-                return Eval(expanded);
-            }
-
-            // built-in function
-            if (sym.name in builtins)
-                return builtins[sym.name].apply(null, listToArray(args).map(Eval));
-
-            // lisp function
-            var symInEnv;
-            if ((symInEnv = findSymbol(sym.name, SYM_FUNCTION)))
-            {
-                var func = getSymbolValue(symInEnv, SYM_FUNCTION);
-                validateFunction(func);
-                return evalFunction(func, listToArray(args).map(Eval));
-            }
+            if (sym.name in specials)
+                return specials[sym.name](args, form);
             else
-                throw "void function " + tos(sym);
+                return evalFunction(sym, listToArray(args));
         }
+
+        // (lambda () ...)
+        if (consp(sym) && equal(car(sym), symLambda))
+            return evalFunction(form, listToArray(args).map(Eval));
+
+        throw "invalid function " + tos(sym);
     }
     else
     {
@@ -676,8 +674,6 @@ function argCount(args) {
 
 // List
 function assertArgCountL(count, op, args) {
-    print("expects : " + count);
-    print("got     : " + argCount(args));
     if (!op(argCount(args), count))
         throw "wrong number of arguments";
 }
@@ -853,12 +849,29 @@ special('while', function (lst) {
             return nil;
         });
 
-special('progn', function (lst) {
-            var body = listToArray(lst);
-            var val = nil;
-            for (var i = 0; i < body.length; ++i)
-                val = Eval(body[i]);
-            return val;
+function progn(lst) {
+    var body = listToArray(lst);
+    var val = nil;
+    for (var i = 0; i < body.length; ++i)
+        val = Eval(body[i]);
+    return val;
+}
+
+special('progn', progn);
+
+special('prog1', function (lst) {
+            assertArgCountL(1, argGte, lst);
+            var first = Eval(car(lst));
+            progn(cdr(lst));
+            return first;
+        });
+
+special('prog2', function (lst) {
+            assertArgCountL(2, argGte, lst);
+            var first  = Eval(car(lst));
+            var second = Eval(cadr(lst));
+            progn(cddr(lst));
+            return second;
         });
 
 special('and', function (lst) {
@@ -949,17 +962,35 @@ builtin('apply', function (func) {
 // Builtin functions / List processing
 // ====================================================================== //
 
-builtin('cons', function (x, y) { assertArgCountA(2, argEq, arguments); return cons; });
-builtin('car',  function (x, y) { assertArgCountA(2, argEq, arguments); return car;  });
-builtin('cdr',  function (x, y) { assertArgCountA(2, argEq, arguments); return cdr;  });
-builtin('caar', function (x, y) { assertArgCountA(2, argEq, arguments); return caar; });
-builtin('cadr', function (x, y) { assertArgCountA(2, argEq, arguments); return cadr; });
-builtin('cdar', function (x, y) { assertArgCountA(2, argEq, arguments); return cdar; });
-builtin('cddr', function (x, y) { assertArgCountA(2, argEq, arguments); return cddr; });
+builtin('cons', function (x, y) { assertArgCountA(2, argEq, arguments); return cons(x, y); });
+builtin('car',  function (x, y) { assertArgCountA(2, argEq, arguments); return car(x, y);  });
+builtin('cdr',  function (x, y) { assertArgCountA(2, argEq, arguments); return cdr(x, y);  });
+builtin('caar', function (x, y) { assertArgCountA(2, argEq, arguments); return caar(x, y); });
+builtin('cadr', function (x, y) { assertArgCountA(2, argEq, arguments); return cadr(x, y); });
+builtin('cdar', function (x, y) { assertArgCountA(2, argEq, arguments); return cdar(x, y); });
+builtin('cddr', function (x, y) { assertArgCountA(2, argEq, arguments); return cddr(x, y); });
 
 builtin('list', list);
 builtin('tail', function (seq) { assertArgCountA(1, argEq, arguments); return tail(seq); });
 builtin('append', append);
+
+function mapList(func, seq) {
+    if (!listp(seq))
+        throw "wrong type listp " + tos(seq);
+
+    return arrayToList(listToArray(seq).map(func));
+}
+
+builtin('mapc', function (func, seq) {
+            assertArgCountA(2, argGte, arguments);
+            mapList(function (elem) { return evalFunction(func, [elem]); }, seq);
+            return seq;
+        });
+
+builtin('mapcar', function (func, seq) {
+            assertArgCountA(2, argGte, arguments);
+            return mapList(function (elem) { return evalFunction(func, [elem]); }, seq);
+        });
 
 // ====================================================================== //
 // Builtin functions / Operators
