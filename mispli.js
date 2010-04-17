@@ -11,11 +11,11 @@ var Mispli =
          // Class variables (private)
          // ====================================================================== //
 
-         var genv     = {};
-         var envs     = [];
-         var builtins = {};
-         var specials = {};
-         var macros   = {};
+         var globalEnv = {};
+         var localEnvs = [];
+         var builtins  = {};
+         var specials  = {};
+         var macros    = {};
 
          const ATOM_SYMBOL = 1;
          const ATOM_STRING = 2;
@@ -66,7 +66,7 @@ var Mispli =
          // ====================================================================== //
 
          function intern(name, context) {
-             context = context || genv;
+             context = context || globalEnv;
              if (!(name in context))
              {
                  context[name] = createSymbol(name);
@@ -76,7 +76,7 @@ var Mispli =
          }
 
          function unIntern(name, context) {
-             context = context || genv;
+             context = context || globalEnv;
              delete context[name];
          }
 
@@ -98,6 +98,30 @@ var Mispli =
              }
          }
 
+         function set(sym, value, constant, context) {
+             if (!isSymbol(sym))
+                 throw "wrong type symbolp " + sexpToStr(sym);
+
+             var sym = intern(sym.name, context);
+
+             if (isConstantSymbol(sym))
+                 throw "setting value to the constant";
+
+             setSymbolValue(sym, constant ? SYM_CONSTANT : SYM_VARIABLE, value);
+
+             return value;
+         }
+
+         function setSymbolFunction(atom, func) {
+             if (!isSymbol(atom))
+                 throw "wrong type symbolp" + sexpToStr(atom);
+
+             var sym = intern(atom.name);
+             setSymbolValue(sym, SYM_FUNCTION, func);
+
+             return func;
+         }
+
          function getSymbolValue(symbol, type) {
              if (symbol.type !== ATOM_SYMBOL)
                  throw "Non symbol value passed";
@@ -116,6 +140,9 @@ var Mispli =
          function hasSymbolType(symbol, type) {
              if (symbol.type !== ATOM_SYMBOL)
                  throw "Non symbol value passed";
+
+             if (!symbol.value)
+                 return false;
 
              switch (type)
              {
@@ -145,34 +172,10 @@ var Mispli =
 
          function findSymbol(name, type) {
              var sym;
-             for (var i = envs.length - 1; i >= 0; --i)
-                 if ((sym = findSymbolInEnv(name, type, envs[i])))
+             for (var i = localEnvs.length - 1; i >= 0; --i)
+                 if ((sym = findSymbolInEnv(name, type, localEnvs[i])))
                      return sym;
-             return findSymbolInEnv(name, type, genv);
-         }
-
-         function set(atom, value, constant, context) {
-             if (!isSymbol(atom))
-                 throw "wrong type symbolp " + sexpToStr(atom);
-
-             var sym = intern(atom.name, context);
-
-             if (isConstantSymbol(sym))
-                 throw "setting value to the constant";
-
-             setSymbolValue(sym, constant ? SYM_CONSTANT : SYM_VARIABLE, value);
-
-             return value;
-         }
-
-         function setSymbolFunction(atom, func) {
-             if (!isSymbol(atom))
-                 throw "wrong type symbolp" + sexpToStr(atom);
-
-             var sym = intern(atom.name);
-             setSymbolValue(sym, SYM_FUNCTION, func);
-
-             return func;
+             return findSymbolInEnv(name, type, globalEnv);
          }
 
          // ====================================================================== //
@@ -597,13 +600,13 @@ var Mispli =
              }
 
              var error;
-             envs.push(env);
+             localEnvs.push(env);
              try {
                  var val = Eval(cons(symProgn, body));
              } catch (x) {
                  error = x;
              }
-             envs.pop();
+             localEnvs.pop();
 
              if (error)
                  throw error;
@@ -736,6 +739,7 @@ var Mispli =
                      {
                          var sym = args[i];
                          var val = Eval(args[i + 1] || symNil);
+                         findSymbol
                          set(sym, val);
                      }
 
@@ -780,7 +784,7 @@ var Mispli =
                      var vals = vlist.map(function (pair) { return isList(pair) ? cadr(pair) : symNil; });
 
                      var env = {};
-                     envs.push(env);
+                     localEnvs.push(env);
 
                      for (var i = 0; i < vars.length; ++i)
                          setSymbolValue(intern(vars[i].name, env), SYM_VARIABLE, Eval(vals[i]));
@@ -791,7 +795,7 @@ var Mispli =
                      } catch (x) {
                          error = x;
                      }
-                     envs.pop();
+                     localEnvs.pop();
 
                      if (error)
                          throw error;
@@ -946,6 +950,18 @@ var Mispli =
          builtin('listp', function (x) { assertArgCountA(1, argEq, arguments); return boxBool[isList(x)]; });
          builtin('numberp', function (x) { assertArgCountA(1, argEq, arguments); return boxBool[isNumber(x)]; });
          builtin('stringp', function (x) { assertArgCountA(1, argEq, arguments); return boxBool[isString(x)]; });
+         builtin('boundp', function (x) {
+                     assertArgCountA(1, argEq, arguments);
+                     return boxBool[isSymbol(x) && (hasSymbolType(x, SYM_CONSTANT || hasSymbolType(x, SYM_VARIABLE)))];
+                 });
+         builtin('fboundp', function (x) {
+                     assertArgCountA(1, argEq, arguments);
+                     return boxBool[isSymbol(x) &&
+                                    ((x.name in builtins)
+                                     || (x.name in specials)
+                                     || (x.name in macros)
+                                     || isSymbol(x) && hasSymbolType(x, SYM_FUNCTION))];
+                 });
 
          builtin('funcall', function (func) {
                      assertArgCountA(1, argGte, arguments);
@@ -1137,9 +1153,9 @@ var Mispli =
              SYM_FUNCTION   : SYM_FUNCTION,
              SYM_VARIABLE   : SYM_VARIABLE,
              SYM_CONSTANT   : SYM_CONSTANT,
-             // envs
-             genv           : genv,
-             envs           : envs,
+             // Envs
+             globalEnv      : globalEnv,
+             localEnvs      : localEnvs,
              builtins       : builtins,
              specials       : specials,
              macros         : macros,
