@@ -17,9 +17,10 @@ var Mispli =
          var specials    = {};
          var macros      = {};
 
-         const ATOM_SYMBOL = 1;
-         const ATOM_STRING = 2;
-         const ATOM_NUMBER = 3;
+         const ATOM_SYMBOL  = 1;
+         const ATOM_STRING  = 2;
+         const ATOM_NUMBER  = 3;
+         const SP_CLOSURE   = 4;
 
          const SYM_VARIABLE = 1;
          const SYM_FUNCTION = 2;
@@ -223,6 +224,18 @@ var Mispli =
 
              // global variable
              return findSymbolInEnv(name, type, globalEnv);
+         }
+
+         // ====================================================================== //
+         // Closure
+         // ====================================================================== //
+
+         function createClosure(lambda, envs) {
+             return {
+                 type   : SP_CLOSURE,
+                 lambda : lambda,
+                 envs   : envs.slice(0) // copy array (envs)
+             };
          }
 
          // ====================================================================== //
