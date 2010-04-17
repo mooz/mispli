@@ -799,7 +799,7 @@ p
 
          special('and', function (lst, envs) {
                      var conditions = listToArray(lst);
-                     var v = t;
+                     var v = symTrue;
                      for (var i = 0; i < conditions.length; ++i)
                          if (isNil(v = Eval(conditions[i], envs)))
                              return symNil;
@@ -808,7 +808,7 @@ p
 
          special('or', function (lst, envs) {
                      var conditions = listToArray(lst);
-                     var v = t;
+                     var v = symTrue;
                      for (var i = 0; i < conditions.length; ++i)
                          if (isTrue(v = Eval(conditions[i], envs)))
                              return v;
