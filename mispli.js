@@ -60,24 +60,6 @@ var Mispli =
              };
          }
 
-         function setSymbolValue(symbol, type, value) {
-             if (symbol.type !== ATOM_SYMBOL)
-                 throw "Wrong assignment";
-
-             switch (type)
-             {
-             case SYM_VARIABLE:
-                 symbol.value.v = value;
-                 break;
-             case SYM_FUNCTION:
-                 symbol.value.f = value;
-                 break;
-             case SYM_CONSTANT:
-                 symbol.value.c = value;
-                 break;
-             }
-         }
-
          // ====================================================================== //
          // Atom
          // ====================================================================== //
