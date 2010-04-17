@@ -98,7 +98,7 @@ var Mispli =
 
          function setSymbolValue(symbol, type, value) {
              if (symbol.type !== ATOM_SYMBOL)
-                 throw "Wrong assignment";
+                 throw "invalid assignment";
 
              switch (type)
              {
@@ -207,7 +207,7 @@ var Mispli =
                  // local variable (in current scope created by function)
                  if ((sym = findSymbolInEnv(name, type, envs[envs.length - 1].locals)))
                      return sym;
-                 // local variable (in current outer scope created by `let')
+                 // local variable or variables in closure (in current outer scope created by `let')
                  for (i = envs.length - 2; i >= 0; --i)
                  {
                      if (envs[i].type !== ENV_TRANSPARENT)
@@ -230,11 +230,32 @@ var Mispli =
          // Closure
          // ====================================================================== //
 
+         function copyAccessibleEnvs(envs) {
+             var copied = [];
+
+             for (var i = envs.length - 1; i >= 0; --i)
+             {
+                 if (envs[i].type !== ENV_TRANSPARENT)
+                 {
+                     // copy last accessible env by changing its type
+                     var last = {};
+                     for (var k in envs[i])
+                         last[k] = envs[i][k];
+                     last.type = ENV_TRANSPARENT; // this is important
+                     copied.unshift(last);
+                     break;
+                 }
+                 copied.unshift(envs[i]);
+             }
+
+             return copied;
+         }
+
          function createClosure(lambda, envs) {
              return {
                  type   : SP_CLOSURE,
                  lambda : lambda,
-                 envs   : envs.slice(0) // copy array (envs)
+                 envs   : copyAccessibleEnvs(envs)
              };
          }
 
@@ -323,12 +344,13 @@ var Mispli =
 
          function car(lst)  {
              if (!isList(lst))
-                 throw "wrong type argument listp " + sexpToStr(lst);
+                 throw new Error("wrong type argument listp" + sexpToStr(lst));
+                 // throw "wrong type argument listp" + sexpToStr(lst);
              return isNil(lst) ? symNil : lst[0];
          }
          function cdr(lst)  {
              if (!isList(lst))
-                 throw "wrong type argument listp " + sexpToStr(lst);
+                 throw "wrong type argument listp" + sexpToStr(lst);
              return isNil(lst) ? symNil : lst[1];
          }
 
@@ -419,14 +441,13 @@ p
                  else
                  {
                      if (!vals[j])
-                         throw "wrong number of arguments";
+                         throw argErrorMessage(j + 1, j);
 
                      pArgs.push(args[i]);
                      pVals.push(vals[j]);
                  }
              }
 
-             // for assertArgCountA
              while (j < vals.length)
                  pVals.push(vals[j++]);
 
@@ -438,28 +459,35 @@ p
                  throw "invalid function " + sexpToStr(func);
          }
 
-         function evalFunction(func, vals) {
+         function evalFunction(func, vals, envs) {
              if (isSymbol(func))
              {
                  // macro
                  if (func.name in macros)
                  {
-                     var expanded = evalFunction(macros[func.name], vals);
-                     return Eval(expanded);
+                     var expanded = evalFunction(macros[func.name], vals, envs);
+                     return Eval(expanded, envs);
                  }
 
                  // built-in function
                  if (func.name in builtins)
-                     return builtins[func.name].apply(null, vals.map(Eval));
+                     return builtins[func.name](arrayToList(vals.map(curry2(Eval, envs))), envs);
 
-                 // lisp function. find function from globalEnv
-                 var symInEnv;
-                 if ((symInEnv = findSymbol(func.name, SYM_FUNCTION)))
-                     func = getSymbolValue(symInEnv, SYM_FUNCTION);
+                 // lisp global function. find function from globalEnv
+                 var symFunc;
+                 if ((symFunc = findSymbol(func.name, SYM_FUNCTION)))
+                     func = getSymbolValue(symFunc, SYM_FUNCTION);
                  else
                      throw "void function " + sexpToStr(func);
 
-                 vals = vals.map(Eval);
+                 vals = vals.map(curry2(Eval, envs));
+             }
+             else if (func && func.type && func.type === SP_CLOSURE)
+             {
+                 // lexical closure
+                 var closure = func;
+                 func = closure.lambda;
+                 envs = closure.envs;
              }
 
              validateFunction(func);
@@ -472,7 +500,7 @@ p
              vals = processed.vals;
 
              if (args.length !== vals.length)
-                 throw "wrong number of arguments";
+                 throw argErrorMessage(args.length, vals.length);
 
              var env = createEnv(ENV_BARRIER);
 
@@ -483,13 +511,13 @@ p
              }
 
              var error;
-             currentEnvs.push(env);
+             envs.push(env);
              try {
-                 var val = Eval(cons(symProgn, body));
+                 var val = Eval(cons(symProgn, body), envs);
              } catch (x) {
                  error = x;
              }
-             currentEnvs.pop();
+             envs.pop();
 
              if (error)
                  throw error;
@@ -499,7 +527,11 @@ p
          var evalDepth    = 0;
          var maxEvalDepth = 100000;
 
-         function Eval(form) {
+         function Eval(form, envs) {
+             // [...].map(Eval) => env becomes the index (number)
+             if (!(envs instanceof Array))
+                 envs = currentEnvs;
+
              if (++evalDepth > maxEvalDepth)
                  throw "eval depth exceeds maxEvalDepth (" + maxEvalDepth + ")";
 
@@ -511,14 +543,15 @@ p
                  if (isSymbol(sym))
                  {
                      if (sym.name in specials)
-                         return specials[sym.name](args, form);
+                         return specials[sym.name](args, envs);
                      else
-                         return evalFunction(sym, listToArray(args));
+                         return evalFunction(sym, listToArray(args), envs);
                  }
 
-                 // (lambda () ...)
+                 // ((lambda () ...) ...)
+                 // We does not need to create the closure
                  if (isCons(sym) && equal(car(sym), symLambda))
-                     return evalFunction(form, listToArray(args).map(Eval));
+                     return evalFunction(form, listToArray(args).map(curry2(Eval)), envs);
 
                  throw "invalid function " + sexpToStr(sym);
              }
@@ -532,21 +565,18 @@ p
                      if (isKeyword(atom)) // keyword
                          return atom;
 
-                     // TODO : to implement the Closure, this must be specify the "envs"
-                     var sym  = findSymbol(atom.name);
+                     var sym;
 
-                     if (!sym)
-                         throw "void variable " + sexpToStr(atom);
-
-                     if (hasSymbolType(sym, SYM_CONSTANT))
+                     if ((sym = findSymbol(atom.name, SYM_CONSTANT, envs)))
                          return getSymbolValue(sym, SYM_CONSTANT);
-                     else if (hasSymbolType(sym, SYM_VARIABLE))
+
+                     if ((sym = findSymbol(atom.name, SYM_VARIABLE, envs)))
                          return getSymbolValue(sym, SYM_VARIABLE);
-                     else
-                         throw "void variable " + sexpToStr(atom);
-                     break;
+
+                     throw "void variable " + sexpToStr(atom);
                  case ATOM_STRING:
                  case ATOM_NUMBER:
+                 case SP_CLOSURE:
                      return atom;
                  default:
                      throw "unknown atom passed";
@@ -566,15 +596,16 @@ p
          }
 
          // List
-         function assertArgCountL(count, op, args) {
-             if (!op(argCount(args), count))
-                 throw "wrong number of arguments";
+         function assertArgCountL(expects, op, args) {
+             var count;
+             if (!op(count = argCount(args), expects))
+                 throw argErrorMessage(expects, count);
          }
 
          // Array
-         function assertArgCountA(count, op, args) {
-             if (!op(args.length, count))
-                 throw "wrong number of arguments";
+         function assertArgCountA(expects, op, args) {
+             if (!op(args.length, expects))
+                 throw argErrorMessage(expects, args.length);
          }
 
          function argEq(a, b) { return a === b; }
@@ -599,36 +630,36 @@ p
          // Special forms / Basics
          // ====================================================================== //
 
-         special(['quote', 'function'], function (lst) {
+         special(['quote', 'function'], function (lst, envs) {
                      assertArgCountL(1, argEq, lst);
 
                      return car(lst);
                  });
 
-         special('set', function (lst) {
+         special('set', function (lst, envs) {
                      assertArgCountL(2, argEq, lst);
 
                      var sym = Eval(car(lst));
                      var val = Eval(cadr(lst));
-                     setVariable(sym, val);
+                     setVariable(sym, val, false, envs);
 
                      return val;
                  });
 
-         special('setq', function (lst) {
+         special('setq', function (lst, envs) {
                      var args = listToArray(lst);
 
                      for (var i = 0; i < args.length; i += 2)
                      {
                          var sym = args[i];
-                         var val = Eval(args[i + 1] || symNil);
-                         setVariable(sym, val);
+                         var val = Eval(args[i + 1] || symNil, envs);
+                         setVariable(sym, val, false, envs);
                      }
 
                      return val;
                  });
 
-         special('defun', function (lst) {
+         special('defun', function (lst, envs) {
                      // (defun NAME ARGLIST [BODY ...])
                      assertArgCountL(2, argGte, lst);
 
@@ -642,9 +673,11 @@ p
                      return symNil;
                  });
 
-         function doLet(lst, evalInLetContext) {
+         function doLet(lst, evalInLetContext, envs) {
              // (let VARLIST BODY...)
              assertArgCountL(1, argGte, lst);
+
+             envs = envs || currentEnvs;
 
              var vlist = listToArray(car(lst));
              var body  = cdr(lst);
@@ -655,40 +688,39 @@ p
              var env = createEnv(ENV_TRANSPARENT);
 
              if (evalInLetContext)
-                 currentEnvs.push(env);
+                 envs.push(env);
 
              for (var i = 0; i < vars.length; ++i)
-                 setSymbolValue(intern(vars[i].name, env.locals), SYM_VARIABLE, Eval(vals[i]));
+                 setSymbolValue(intern(vars[i].name, env.locals), SYM_VARIABLE, Eval(vals[i], envs));
 
              if (!evalInLetContext)
-                 currentEnvs.push(env);
+                 envs.push(env);
 
              var error;
              try {
-                 var val = Eval(cons(symProgn, body));
+                 var val = Eval(cons(symProgn, body), envs);
              } catch (x) {
                  error = x;
              }
-             currentEnvs.pop();
+             envs.pop();
 
              if (error)
                  throw error;
              return val;
          }
 
-         special('let', function (lst) { return doLet(lst); });
-         special('let*', function (lst) { return doLet(lst, true); });
+         special('let', function (lst, envs) { return doLet(lst, false, envs); });
+         special('let*', function (lst, envs) { return doLet(lst, true, envs); });
 
-         special('lambda', function (lst, form) {
-                     // TODO : Create closure (copy [1-level] currentEnvs and attatch it to the function)
-                     return form;
+         special('lambda', function (lst, envs) {
+                     return createClosure(cons(symLambda, lst), envs);
                  });
 
          // ====================================================================== //
          // Special forms / Control Structures
          // ====================================================================== //
 
-         special('cond', function (lst) {
+         special('cond', function (lst, envs) {
                      do
                      {
                          var clause = car(lst);
@@ -696,13 +728,13 @@ p
                          if (isList(clause))
                          {
                              var condResult;
-                             if (isTrue(condResult = Eval(car(clause))))
+                             if (isTrue(condResult = Eval(car(clause), envs)))
                              {
-                                 return isNil(cdr(clause)) ? condResult : Eval(cadr(clause));
+                                 return isNil(cdr(clause)) ? condResult : Eval(cadr(clause), envs);
                              }
                          }
                          else
-                             throw "wrong type argument listp";
+                             throw "wrong type argument listp " + sexpToStr(lst);
 
                          lst = cdr(lst);
                      } while (isTrue(clause));
@@ -710,75 +742,75 @@ p
                      return symNil;
                  });
 
-         special('if', function (lst) {
+         special('if', function (lst, envs) {
                      assertArgCountL(2, argGte, lst);
 
                      var test  = car(lst);
                      var tform = cadr(lst);
                      var fform = cddr(lst);
 
-                     if (isTrue(Eval(test)))
-                         return Eval(tform);
+                     if (isTrue(Eval(test, envs)))
+                         return Eval(tform, envs);
 
                      fform = listToArray(fform);
 
                      var val = symNil;
                      for (var i = 0; i < fform.length; ++i)
-                         val = Eval(fform[i]);
+                         val = Eval(fform[i], envs);
                      return val;
                  });
 
-         special('while', function (lst) {
+         special('while', function (lst, envs) {
                      assertArgCountL(1, argGte, lst);
 
                      var test = car(lst);
                      var body = cdr(lst);
                      body = listToArray(body);
-                     while (isTrue(Eval(test)))
+                     while (isTrue(Eval(test, envs)))
                          for (var i = 0; i < body.length; ++i)
-                             Eval(body[i]);
+                             Eval(body[i], envs);
                      return symNil;
                  });
 
-         function progn(lst) {
+         function progn(lst, envs) {
              var body = listToArray(lst);
              var val = symNil;
              for (var i = 0; i < body.length; ++i)
-                 val = Eval(body[i]);
+                 val = Eval(body[i], envs);
              return val;
          }
 
          special('progn', progn);
 
-         special('prog1', function (lst) {
+         special('prog1', function (lst, envs) {
                      assertArgCountL(1, argGte, lst);
-                     var first = Eval(car(lst));
-                     progn(cdr(lst));
+                     var first = Eval(car(lst, envs));
+                     progn(cdr(lst), envs);
                      return first;
                  });
 
-         special('prog2', function (lst) {
+         special('prog2', function (lst, envs) {
                      assertArgCountL(2, argGte, lst);
-                     var first  = Eval(car(lst));
-                     var second = Eval(cadr(lst));
-                     progn(cddr(lst));
+                     var first  = Eval(car(lst), envs);
+                     var second = Eval(cadr(lst), envs);
+                     progn(cddr(lst), envs);
                      return second;
                  });
 
-         special('and', function (lst) {
+         special('and', function (lst, envs) {
                      var conditions = listToArray(lst);
                      var v = t;
                      for (var i = 0; i < conditions.length; ++i)
-                         if (isNil(v = Eval(conditions[i])))
+                         if (isNil(v = Eval(conditions[i], envs)))
                              return symNil;
                      return v;
                  });
 
-         special('or', function (lst) {
+         special('or', function (lst, envs) {
                      var conditions = listToArray(lst);
                      var v = t;
                      for (var i = 0; i < conditions.length; ++i)
-                         if (isTrue(v = Eval(conditions[i])))
+                         if (isTrue(v = Eval(conditions[i], envs)))
                              return v;
                      return v;
                  });
@@ -794,7 +826,7 @@ p
              return macro;
          }
 
-         special('defmacro', function (lst) {
+         special('defmacro', function (lst, envs) {
                      var name  = car(lst);
                      var pargs = cadr(lst);
                      var body  = cddr(lst);
@@ -820,22 +852,50 @@ p
          // Builtin functions / Predicatives
          // ====================================================================== //
 
-         builtin(['eq', 'eql'], function (a, b) { assertArgCountA(2, argEq, arguments); return boxBool[eq(a, b)]; });
-         builtin('equal', function (a, b) { assertArgCountA(2, argEq, arguments); return boxBool[equal(a, b)]; });
-
-         builtin(['null', 'not'], function (x) { assertArgCountA(1, argEq, arguments); return boxBool[isNil(x)]; });
-         builtin('symbolp', function (x) { assertArgCountA(1, argEq, arguments); return boxBool[isSymbol(x)]; });
-         builtin('atom', function (x) { assertArgCountA(1, argEq, arguments); return boxBool[isAtom(x)]; });
-         builtin('consp', function (x) { assertArgCountA(1, argEq, arguments); return boxBool[isCons(x)]; });
-         builtin('listp', function (x) { assertArgCountA(1, argEq, arguments); return boxBool[isList(x)]; });
-         builtin('numberp', function (x) { assertArgCountA(1, argEq, arguments); return boxBool[isNumber(x)]; });
-         builtin('stringp', function (x) { assertArgCountA(1, argEq, arguments); return boxBool[isString(x)]; });
-         builtin('boundp', function (x) {
-                     assertArgCountA(1, argEq, arguments);
+         builtin(['eq', 'eql'], function (lst, envs) {
+                     assertArgCountL(2, argEq, lst);
+                     return boxBool[eq(a, b)];
+                 });
+         builtin('equal', function (lst, envs) {
+                     assertArgCountL(2, argEq, lst);
+                     return boxBool[equal(car(lst), cadr(lst))];
+                 });
+         builtin(['null', 'not'], function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+                     return boxBool[isNil(car(lst))];
+                 });
+         builtin('symbolp', function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+                     return boxBool[isSymbol(car(lst))];
+                 });
+         builtin('atom', function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+                     return boxBool[isAtom(car(lst))];
+                 });
+         builtin('consp', function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+                     return boxBool[isCons(car(lst))];
+                 });
+         builtin('listp', function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+                     return boxBool[isList(car(lst))];
+                 });
+         builtin('numberp', function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+                     return boxBool[isNumber(car(lst))];
+                 });
+         builtin('stringp', function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+                     return boxBool[isString(car(lst))];
+                 });
+         builtin('boundp', function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+                     var x = car(lst);
                      return boxBool[isSymbol(x) && (hasSymbolType(x, SYM_CONSTANT || hasSymbolType(x, SYM_VARIABLE)))];
                  });
-         builtin('fboundp', function (x) {
-                     assertArgCountA(1, argEq, arguments);
+         builtin('fboundp', function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+                     var x = car(lst);
                      return boxBool[isSymbol(x) &&
                                     ((x.name in builtins)
                                      || (x.name in specials)
@@ -843,32 +903,35 @@ p
                                      || isSymbol(x) && hasSymbolType(x, SYM_FUNCTION))];
                  });
 
-         builtin('funcall', function (func) {
-                     assertArgCountA(1, argGte, arguments);
-                     return evalFunction(func, Array.prototype.slice.call(arguments, 1));
+         builtin('funcall', function (lst, envs) {
+                     assertArgCountL(1, argGte, lst);
+                     return evalFunction(car(lst), listToArray(cdr(lst)), envs);
                  });
 
-         builtin('apply', function (func) {
-                     assertArgCountA(1, argGte, arguments);
-                     var vals = Array.prototype.slice.call(arguments, 1, arguments.length - 1);
-                     vals = vals.concat(listToArray(arguments[arguments.length - 1]));
-                     return evalFunction(func, vals);
+         builtin('apply', function (lst, envs) {
+                     assertArgCountL(1, argGte, lst);
+
+                     var args = listToArray(lst);
+                     var vals = Array.prototype.slice.call(args, 1, args.length - 1);
+                     vals = vals.concat(listToArray(args[args.length - 1]));
+
+                     return evalFunction(car(lst), vals, envs);
                  });
 
          // ====================================================================== //
          // Builtin functions / List processing
          // ====================================================================== //
 
-         builtin('cons', function (x, y) { assertArgCountA(2, argEq, arguments); return cons(x, y); });
-         builtin('car',  function (x, y) { assertArgCountA(2, argEq, arguments); return car(x, y);  });
-         builtin('cdr',  function (x, y) { assertArgCountA(2, argEq, arguments); return cdr(x, y);  });
-         builtin('caar', function (x, y) { assertArgCountA(2, argEq, arguments); return caar(x, y); });
-         builtin('cadr', function (x, y) { assertArgCountA(2, argEq, arguments); return cadr(x, y); });
-         builtin('cdar', function (x, y) { assertArgCountA(2, argEq, arguments); return cdar(x, y); });
-         builtin('cddr', function (x, y) { assertArgCountA(2, argEq, arguments); return cddr(x, y); });
+         builtin('cons', function (lst) { assertArgCountL(2, argEq, lst); return cons(car(lst), cadr(lst)); });
+         builtin('car',  function (lst) { assertArgCountL(1, argEq, lst); return car(car(lst)); });
+         builtin('cdr',  function (lst) { assertArgCountL(1, argEq, lst); return cdr(car(lst)); });
+         builtin('caar', function (lst) { assertArgCountL(1, argEq, lst); return caar(car(lst)); });
+         builtin('cadr', function (lst) { assertArgCountL(1, argEq, lst); return cadr(car(lst)); });
+         builtin('cdar', function (lst) { assertArgCountL(1, argEq, lst); return cdar(car(lst)); });
+         builtin('cddr', function (lst) { assertArgCountL(1, argEq, lst); return cddr(car(lst)); });
 
-         builtin('list', list);
-         builtin('tail', function (seq) { assertArgCountA(1, argEq, arguments); return tail(seq); });
+         builtin('list', function (lst) { return lst; });
+         builtin('tail', function (lst) { assertArgCountL(1, argEq, lst); return tail(car(lst)); });
          builtin('append', append);
 
          function mapList(func, seq) {
@@ -878,106 +941,134 @@ p
              return arrayToList(listToArray(seq).map(func));
          }
 
-         builtin('mapc', function (func, seq) {
-                     assertArgCountA(2, argGte, arguments);
-                     mapList(function (elem) { return evalFunction(func, [elem]); }, seq);
+         builtin('mapc', function (lst, envs) {
+                     assertArgCountL(2, argGte, lst);
+
+                     var func = car(lst), seq = cadr(lst);
+
+                     mapList(function (elem) { return evalFunction(func, [elem], envs); }, seq);
+
                      return seq;
                  });
 
-         builtin('mapcar', function (func, seq) {
-                     assertArgCountA(2, argGte, arguments);
-                     return mapList(function (elem) { return evalFunction(func, [elem]); }, seq);
+         builtin('mapcar', function (lst, envs) {
+                     assertArgCountL(2, argGte, lst);
+
+                     var func = car(lst), seq = cadr(lst);
+
+                     return mapList(function (elem) { return evalFunction(func, [elem], envs); }, seq);
                  });
 
          // ====================================================================== //
          // Builtin functions / Operators
          // ====================================================================== //
 
-         builtin('+', function (numbers) {
-                     for (var i = 0, v = 0; i < arguments.length; ++i)
-                         v += arguments[i].value;
+         builtin('+', function (lst) {
+                     var args = listToArray(lst);
+
+                     for (var i = 0, v = 0; i < args.length; ++i)
+                         v += args[i].value;
+
                      return createNumber(v);
                  });
-         builtin('-', function (x, numbers) {
-                     if (!arguments.length)
+         builtin('-', function (lst) {
+                     var args = listToArray(lst);
+
+                     if (!args.length)
                          return createNumber(0);
 
-                     if (arguments.length === 1)
+                     var x = args[0];
+
+                     if (args.length === 1)
                          return createNumber(-x.value);
 
-                     for (var i = 1, v = x.value; i < arguments.length; ++i)
-                         v -= arguments[i].value;
+                     for (var i = 1, v = x.value; i < args.length; ++i)
+                         v -= args[i].value;
+
                      return createNumber(v);
                  });
-         builtin('*', function (numbers) {
-                     for (var i = 0, v = 1; i < arguments.length; ++i)
-                         v *= arguments[i].value;
+         builtin('*', function (lst) {
+                     var args = listToArray(lst);
+
+                     for (var i = 0, v = 1; i < args.length; ++i)
+                         v *= args[i].value;
+
                      return createNumber(v);
                  });
-         builtin('/', function (x, divisors) {
-                     assertArgCountA(2, argGte, arguments);
-                     for (var i = 1, v = x.value; i < arguments.length; ++i)
-                         v /= arguments[i].value;
+         builtin('/', function (lst) {
+                     assertArgCountL(2, argGte, lst);
+
+                     var args = listToArray(lst);
+                     var x    = args[0];
+
+                     for (var i = 1, v = x.value; i < args.length; ++i)
+                         v /= args[i].value;
+
                      return createNumber(v);
                  });
-         builtin('%', function (x, y) {
-                     assertArgCountA(2, argEq, arguments);
-                     return createNumber(x.value % y.value);
+         builtin('%', function (lst) {
+                     assertArgCountL(2, argEq, lst);
+
+                     return createNumber(car(lst).value % cadr(lst).value);
                  });
 
-         builtin('1-', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(x.value - 1); });
-         builtin('1+', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(x.value + 1); });
+         builtin('1-', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(car(lst).value - 1); });
+         builtin('1+', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(car(lst).value + 1); });
 
          // ====================================================================== //
          // Builtin functions / Operators
          // ====================================================================== //
 
-         builtin('=',  function (x, y) { assertArgCountA(2, argEq, arguments); return boxBool[x.value == y.value]; });
-         builtin('<',  function (x, y) { assertArgCountA(2, argEq, arguments); return boxBool[x.value <  y.value]; });
-         builtin('<=', function (x, y) { assertArgCountA(2, argEq, arguments); return boxBool[x.value <= y.value]; });
-         builtin('>',  function (x, y) { assertArgCountA(2, argEq, arguments); return boxBool[x.value >  y.value]; });
-         builtin('>=', function (x, y) { assertArgCountA(2, argEq, arguments); return boxBool[x.value >= y.value]; });
+         builtin('=',  function (lst) { assertArgCountL(2, argEq, lst); return boxBool[car(lst).value == cadr(lst).value]; });
+         builtin('<',  function (lst) { assertArgCountL(2, argEq, lst); return boxBool[car(lst).value <  cadr(lst).value]; });
+         builtin('<=', function (lst) { assertArgCountL(2, argEq, lst); return boxBool[car(lst).value <= cadr(lst).value]; });
+         builtin('>',  function (lst) { assertArgCountL(2, argEq, lst); return boxBool[car(lst).value >  cadr(lst).value]; });
+         builtin('>=', function (lst) { assertArgCountL(2, argEq, lst); return boxBool[car(lst).value >= cadr(lst).value]; });
 
          // ====================================================================== //
          // Builtin functions / IO
          // ====================================================================== //
 
-         builtin('print', function (v) { assertArgCountA(1, argEq, arguments); print(sexpToStr(v)); return v; });
+         builtin('print', function (lst) { assertArgCountL(1, argEq, lst); print(sexpToStr(car(lst))); return car(lst); });
 
          // ====================================================================== //
          // Builtin functions / Math
          // ====================================================================== //
 
-         builtin('abs', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(Math.abs(x.value)); });
-         builtin('exp', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(Math.exp(x.value)); });
-         builtin('log', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(Math.log(x.value)); });
-         builtin('pow', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(Math.pow(x.value)); });
-         builtin('round', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(Math.round(x.value)); });
-         builtin('ceil', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(Math.ceil(x.value)); });
-         builtin('sin', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(Math.sin(x.value)); });
-         builtin('cos', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(Math.cos(x.value)); });
-         builtin('tan', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(Math.tan(x.value)); });
-         builtin('sqrt', function (x) { assertArgCountA(1, argEq, arguments); return createNumber(Math.sqrt(x.value)); });
-         builtin('random', function (limit) {
-                     assertArgCountA(1, argLte, arguments);
+         builtin('abs', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(Math.abs(car(lst).value)); });
+         builtin('exp', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(Math.exp(car(lst).value)); });
+         builtin('log', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(Math.log(car(lst).value)); });
+         builtin('pow', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(Math.pow(car(lst).value)); });
+         builtin('round', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(Math.round(car(lst).value)); });
+         builtin('ceil', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(Math.ceil(car(lst).value)); });
+         builtin('sin', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(Math.sin(car(lst).value)); });
+         builtin('cos', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(Math.cos(car(lst).value)); });
+         builtin('tan', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(Math.tan(car(lst).value)); });
+         builtin('sqrt', function (lst) { assertArgCountL(1, argEq, lst); return createNumber(Math.sqrt(car(lst).value)); });
+         builtin('random', function (lst) {
+                     assertArgCountL(1, argLte, lst);
                      var rand = Math.random();
-                     return createNumber(!arguments.length ? rand : rand * limit.value);
+                     return createNumber(isNil(lst) ? rand : rand * car(lst).value);
                  });
 
          // ====================================================================== //
          // Builtin functions / Misc
          // ====================================================================== //
 
-         builtin('iota', function (count, from, delta) {
-                     assertArgCountA(1, argGte, arguments);
+         builtin('iota', function (lst, env) {
+                     assertArgCountL(1, argGte, lst);
+
+                     var count = car(lst);
+                     var from  = cadr(lst);
+                     var delta = car(cddr(lst));
 
                      count = count.value;
 
                      if (count < 0)
                          throw "negative count";
 
-                     from  = (typeof from  === "undefined") ? 0 : from.value;
-                     delta = (typeof delta === "undefined") ? 1 : delta.value;
+                     from  = isNil(from) ? 0 : from.value;
+                     delta = isNil(delta) ? 1 : delta.value;
 
                      var array = [createNumber(from)];
                      for (var i = 1; i < count; ++i)
@@ -1159,6 +1250,17 @@ p
          // Utils
          // ====================================================================== //
 
+         function argErrorMessage(expects, given, name) {
+             return (name ? name + " : " : "") +
+                 "wrong number of arguments. required " + expects + " but got " + given;
+         }
+
+         function curry2(func, arg2) {
+             return function (arg1) {
+                 return func(arg1, arg2);
+             };
+         }
+
          function sexpToStr(elem, omitParen) {
              if (elem instanceof Array)
              {
@@ -1181,6 +1283,8 @@ p
                      return "\"" + elem.value + "\"";
                  case ATOM_NUMBER:
                      return elem.value;
+                 case SP_CLOSURE:
+                     return "#<" + (elem.envs.length ? "lexical-closure" : "lambda") + " : " + sexpToStr(elem.lambda) + ">";
                  }
              }
 
