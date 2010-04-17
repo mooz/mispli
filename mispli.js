@@ -11,11 +11,11 @@ var Mispli =
          // Class variables (private)
          // ====================================================================== //
 
-         var globalEnv = {};
-         var localEnvs = [];
-         var builtins  = {};
-         var specials  = {};
-         var macros    = {};
+         var globalEnv   = {};
+         var currentEnvs = [];
+         var builtins    = {};
+         var specials    = {};
+         var macros      = {};
 
          const ATOM_SYMBOL = 1;
          const ATOM_STRING = 2;
@@ -24,6 +24,9 @@ var Mispli =
          const SYM_VARIABLE = 1;
          const SYM_FUNCTION = 2;
          const SYM_CONSTANT = 3;
+
+         const ENV_TRANSPARENT = 1;
+         const ENV_BARRIER     = 2;
 
          var symTrue = intern("t");
          setSymbolValue(symTrue, SYM_CONSTANT, symTrue);
@@ -46,38 +49,15 @@ var Mispli =
          var symKey      = createSymbol('&key');
 
          // ====================================================================== //
-         // Atom
+         // Env
          // ====================================================================== //
 
-         function createAtom(type, name, value) {
+         function createEnv(type) {
              return {
-                 type  : type,
-                 name  : name,
-                 value : value
+                 type     : type,
+                 locals   : {},
+                 dynamics : {}
              };
-         }
-
-         function createString(value) { return createAtom(ATOM_STRING, null, value); }
-         function createNumber(value) { return createAtom(ATOM_NUMBER, null, value); }
-         function createSymbol(name)  { return createAtom(ATOM_SYMBOL, name); }
-
-         // ====================================================================== //
-         // Symbol
-         // ====================================================================== //
-
-         function intern(name, context) {
-             context = context || globalEnv;
-             if (!(name in context))
-             {
-                 context[name] = createSymbol(name);
-                 context[name].value = {};
-             }
-             return context[name];
-         }
-
-         function unIntern(name, context) {
-             context = context || globalEnv;
-             delete context[name];
          }
 
          function setSymbolValue(symbol, type, value) {
@@ -98,28 +78,57 @@ var Mispli =
              }
          }
 
-         function set(sym, value, constant, context) {
-             if (!isSymbol(sym))
-                 throw "wrong type symbolp " + sexpToStr(sym);
+         // ====================================================================== //
+         // Atom
+         // ====================================================================== //
 
-             var sym = intern(sym.name, context);
-
-             if (isConstantSymbol(sym))
-                 throw "setting value to the constant";
-
-             setSymbolValue(sym, constant ? SYM_CONSTANT : SYM_VARIABLE, value);
-
-             return value;
+         function createAtom(type, name, value) {
+             return {
+                 type  : type,
+                 name  : name,
+                 value : value
+             };
          }
 
-         function setSymbolFunction(atom, func) {
-             if (!isSymbol(atom))
-                 throw "wrong type symbolp" + sexpToStr(atom);
+         function createString(value) { return createAtom(ATOM_STRING, null, value); }
+         function createNumber(value) { return createAtom(ATOM_NUMBER, null, value); }
+         function createSymbol(name)  { return createAtom(ATOM_SYMBOL, name); }
 
-             var sym = intern(atom.name);
-             setSymbolValue(sym, SYM_FUNCTION, func);
+         // ====================================================================== //
+         // Symbol
+         // ====================================================================== //
 
-             return func;
+         function intern(name, env) {
+             env = env || globalEnv;
+             if (!(name in env))
+             {
+                 env[name] = createSymbol(name);
+                 env[name].value = {};
+             }
+             return env[name];
+         }
+
+         function unIntern(name, env) {
+             env = env || globalEnv;
+             delete env[name];
+         }
+
+         function setSymbolValue(symbol, type, value) {
+             if (symbol.type !== ATOM_SYMBOL)
+                 throw "Wrong assignment";
+
+             switch (type)
+             {
+             case SYM_VARIABLE:
+                 symbol.value.v = value;
+                 break;
+             case SYM_FUNCTION:
+                 symbol.value.f = value;
+                 break;
+             case SYM_CONSTANT:
+                 symbol.value.c = value;
+                 break;
+             }
          }
 
          function getSymbolValue(symbol, type) {
@@ -135,6 +144,38 @@ var Mispli =
              case SYM_CONSTANT:
                  return symbol.value.c;
              }
+         }
+
+         // uiSym :=> un interned symbol
+         function setVariable(uiSym, value, constant, envs) {
+             if (!isSymbol(uiSym))
+                 throw "wrong type symbolp " + sexpToStr(uiSym);
+
+             if (isKeyword(uiSym))
+                 throw "setting value to the keyword";
+
+             var sym = findSymbol(uiSym.name, SYM_VARIABLE, envs);
+
+             if (!sym && findSymbol(uiSym.name, SYM_CONSTANT, envs))
+                 throw "setting value to the constant";
+
+             if (!sym)
+                 sym = intern(uiSym.name); // create the global variable
+
+             setSymbolValue(sym, constant ? SYM_CONSTANT : SYM_VARIABLE, value);
+
+             return value;
+         }
+
+         function setFunction(uiSym, func) {
+             if (!isSymbol(uiSym))
+                 throw "wrong type symbolp" + sexpToStr(uiSym);
+
+             // functions becomes automatically global
+             var sym = intern(uiSym.name);
+             setSymbolValue(sym, SYM_FUNCTION, func);
+
+             return func;
          }
 
          function hasSymbolType(symbol, type) {
@@ -157,8 +198,12 @@ var Mispli =
              return false;
          }
 
+         function isKeyword(symbol) {
+             return symbol.name && symbol.name[0] === ":";
+         }
+
          function isConstantSymbol(symbol) {
-             return hasSymbolType(symbol, SYM_CONSTANT) || symbol.name[0] === ":";
+             return hasSymbolType(symbol, SYM_CONSTANT) || isKeyword(symbol);
          }
 
          // ====================================================================== //
@@ -166,49 +211,41 @@ var Mispli =
          // ====================================================================== //
 
          function findSymbolInEnv(name, type, env) {
-             if (name in env && (!type || hasSymbolType(env[name], type)))
+             if ((name in env) && (!type || hasSymbolType(env[name], type)))
                  return env[name];
          }
 
-         function findSymbol(name, type) {
-             var sym;
-             for (var i = localEnvs.length - 1; i >= 0; --i)
-                 if ((sym = findSymbolInEnv(name, type, localEnvs[i])))
+         function findSymbol(name, type, envs) {
+             var env, sym, i;
+             envs = envs || currentEnvs;
+
+             if (envs.length)
+             {
+                 // local variable (in current scope created by function)
+                 if ((sym = findSymbolInEnv(name, type, envs[envs.length - 1].locals)))
                      return sym;
+                 // local variable (in current outer scope created by `let')
+                 for (i = envs.length - 2; i >= 0; --i)
+                 {
+                     if (envs[i].type !== ENV_TRANSPARENT)
+                         break;
+                     if ((sym = findSymbolInEnv(name, type, envs[i].locals)))
+                         return sym;
+                 }
+
+                 // dynamic variable
+                 for (i = 0; i >= 0; --i)
+                     if ((sym = findSymbolInEnv(name, type, envs[i].dynamics)))
+                         return sym;
+             }
+
+             // global variable
              return findSymbolInEnv(name, type, globalEnv);
          }
 
          // ====================================================================== //
-         // Atom, Symbol / Utils
+         // List <=> Array Transformation
          // ====================================================================== //
-
-         function sexpToStr(elem, omitParen) {
-             if (elem instanceof Array)
-             {
-                 var a    = sexpToStr(car(elem));
-                 var rest = cdr(elem);
-                 var b    = sexpToStr(rest, isList(rest));
-
-                 var center = isNil(rest) ? a : a + (isList(rest) ? " " : " . ") + b;
-
-                 return omitParen ? center : "(" + center + ")";
-             }
-
-             if (elem && elem.type)
-             {
-                 switch (elem.type)
-                 {
-                 case ATOM_SYMBOL:
-                     return elem.name;
-                 case ATOM_STRING:
-                     return "\"" + elem.value + "\"";
-                 case ATOM_NUMBER:
-                     return elem.value;
-                 }
-             }
-
-             return "sexpToStr : Non LISP object passed. It's value is `" + elem + "'";
-         }
 
          function listToArray(lst) {
              if (isNil(lst))
@@ -217,7 +254,7 @@ var Mispli =
              for (var array = []; isTrue(cdr(lst)); lst = cdr(lst))
              {
                  if (!isList(cdr(lst)))
-                     throw "not a pure list given";
+                     throw "non-pure list is given";
                  array.push(car(lst));
              }
              array.push(car(lst));
@@ -339,7 +376,7 @@ var Mispli =
                      newList.push(car(lst));
                      lst = cdr(lst);
                  }
-
+p
                  if (isTrue(car(lst)))
                      newList.push(car(lst));
              }
@@ -350,155 +387,6 @@ var Mispli =
                  return setCdr(tail(newList), arguments[i]), newList;
              return arguments[0];
          };
-
-         // ====================================================================== //
-         // Parser
-         // ====================================================================== //
-
-         function Parser() {}
-
-         Parser.prototype = {
-             parse: function (str, multi) {
-                 this.i    = 0;
-                 this.str  = str;
-                 this.slen = str.length;
-
-                 if (multi)
-                 {
-                     var forms = [];
-                     while (!this.eos())
-                     {
-                         this.skip();
-                         forms.push(this.parseElement());
-                     }
-
-                     return forms;
-                 }
-
-                 this.skip();
-                 var form = this.parseElement();
-                 if (!this.eos())
-                     throw "Parse Error";
-                 return form;
-             },
-
-             eos: function () {
-                 return this.i >= this.slen;
-             },
-
-             isSpace: function (c) {
-                 return " \t\n".indexOf(c) !== -1;
-             },
-
-             skip: function () {
-                 while (this.isSpace(this.peekCurrent()) && !this.eos())
-                     this.i++;
-             },
-
-             getCurrent: function () {
-                 return this.str.charAt(this.i++);
-             },
-
-             peekCurrent: function () {
-                 return this.str.charAt(this.i);
-             },
-
-             peekNext: function () {
-                 return this.str.charAt(this.i + 1);
-             },
-
-             parseElement: function () {
-                 var current = this.peekCurrent();
-
-                 if (current === "#" && this.peekNext() === "'")
-                 {
-                     this.getCurrent();
-                     this.getCurrent();
-                     return cons(symFunction, cons(this.parseElement(), symNil));
-                 }
-
-                 if (current === "'")
-                 {
-                     this.getCurrent();
-                     return cons(symQuote, cons(this.parseElement(), symNil));
-                 }
-
-                 if (current === "(")
-                     return this.parseList();
-                 else if (current === "\"")
-                     return this.parseString();
-                 else
-                     return this.parseSymbolOrNumber(); // or number
-             },
-
-             parseList: function parseList() {
-                 var lst = [];
-
-                 if (this.getCurrent() !== "(")
-                     throw "parseList : ParseError";
-
-                 this.skip();
-
-                 while (this.peekCurrent() !== ")" && !this.eos())
-                 {
-                     lst.push(this.parseElement());
-                     this.skip();
-                 }
-
-                 if (this.getCurrent() !== ")")
-                     throw "parseList : Unclosed Parenthesis";
-
-                 var slst = symNil;
-
-                 while (lst.length)
-                     slst = [lst.pop(), slst];
-
-                 return slst;
-             },
-
-             parseString: function () {
-                 if (this.getCurrent() !== "\"")
-                     throw "parseString : Not a String";
-
-                 var buffer = [];
-                 var escaped = false;
-
-                 while ((escaped || this.peekCurrent() !== "\"") && !this.eos())
-                 {
-                     escaped = false;
-                     var current = this.getCurrent();
-                     if (current === "\\")
-                         escaped = true;
-                     buffer.push(current);
-                 }
-
-                 if (this.getCurrent() !== "\"")
-                     throw "parseList : Unterminated String";
-
-                 return createString(buffer.join(""));
-             },
-
-             parseSymbolOrNumber: function parseSymbolOrNumber() {
-                 const symbolChars = /[a-zA-Z0-9*&^%$@!~_+=<>:./-]/;
-
-                 var buffer = [];
-
-                 while (symbolChars.test(this.peekCurrent()) && !this.eos())
-                     buffer.push(this.getCurrent());
-
-                 if (!buffer.length)
-                     throw "parseSymbol : Parse error";
-
-                 var symbolName = buffer.join("");
-
-                 if (/^-?[0-9]+([.][0-9]*|e-?[0-9]+)?$/.test(symbolName))
-                     return createNumber(parseFloat(symbolName));
-
-                 return createSymbol(symbolName);
-             }
-         };
-
-         var parser = new Parser();
 
          // ====================================================================== //
          // Evaluation
@@ -569,7 +457,7 @@ var Mispli =
                  if (func.name in builtins)
                      return builtins[func.name].apply(null, vals.map(Eval));
 
-                 // lisp function
+                 // lisp function. find function from globalEnv
                  var symInEnv;
                  if ((symInEnv = findSymbol(func.name, SYM_FUNCTION)))
                      func = getSymbolValue(symInEnv, SYM_FUNCTION);
@@ -591,22 +479,22 @@ var Mispli =
              if (args.length !== vals.length)
                  throw "wrong number of arguments";
 
-             var env = {};
+             var env = createEnv(ENV_BARRIER);
 
              for (var i = 0; i < args.length; ++i)
              {
-                 var sym = intern(args[i].name, env);
+                 var sym = intern(args[i].name, env.locals);
                  setSymbolValue(sym, SYM_VARIABLE, vals[i]);
              }
 
              var error;
-             localEnvs.push(env);
+             currentEnvs.push(env);
              try {
                  var val = Eval(cons(symProgn, body));
              } catch (x) {
                  error = x;
              }
-             localEnvs.pop();
+             currentEnvs.pop();
 
              if (error)
                  throw error;
@@ -646,27 +534,27 @@ var Mispli =
                  switch (atom.type)
                  {
                  case ATOM_SYMBOL:
-                     var name = atom.name;
-
-                     if (name && name[0] === ":") // keyword
+                     if (isKeyword(atom)) // keyword
                          return atom;
 
-                     var sym = findSymbol(name);
+                     // TODO : to implement the Closure, this must be specify the "envs"
+                     var sym  = findSymbol(atom.name);
 
                      if (!sym)
-                         throw "void variable " + name;
+                         throw "void variable " + sexpToStr(atom);
 
                      if (hasSymbolType(sym, SYM_CONSTANT))
                          return getSymbolValue(sym, SYM_CONSTANT);
                      else if (hasSymbolType(sym, SYM_VARIABLE))
                          return getSymbolValue(sym, SYM_VARIABLE);
                      else
-                         throw "void variable " + name;
+                         throw "void variable " + sexpToStr(atom);
                      break;
                  case ATOM_STRING:
                  case ATOM_NUMBER:
                      return atom;
-                     break;
+                 default:
+                     throw "unknown atom passed";
                  }
              }
          }
@@ -727,7 +615,7 @@ var Mispli =
 
                      var sym = Eval(car(lst));
                      var val = Eval(cadr(lst));
-                     set(sym, val);
+                     setVariable(sym, val);
 
                      return val;
                  });
@@ -739,8 +627,7 @@ var Mispli =
                      {
                          var sym = args[i];
                          var val = Eval(args[i + 1] || symNil);
-                         findSymbol
-                         set(sym, val);
+                         setVariable(sym, val);
                      }
 
                      return val;
@@ -755,54 +642,52 @@ var Mispli =
                      var body  = cddr(lst);
 
                      var func = cons(symLambda, cons(pargs, body));
-                     setSymbolFunction(name, func);
+                     setFunction(name, func);
 
                      return symNil;
                  });
 
-         special('let', function (lst) {
-                     // (let VARLIST BODY...)
-                     assertArgCountL(1, argGte, lst);
+         function doLet(lst, evalInLetContext) {
+             // (let VARLIST BODY...)
+             assertArgCountL(1, argGte, lst);
 
-                     var body  = cdr(lst);
-                     var vlist = listToArray(car(lst));
+             var vlist = listToArray(car(lst));
+             var body  = cdr(lst);
 
-                     var vars = vlist.map(function (pair) { return isList(pair) ? car(pair) : pair; });
-                     var vals = vlist.map(function (pair) { return isList(pair) ? cadr(pair) : symNil; }).map(Eval);
+             var vars = vlist.map(function (pair) { return isList(pair) ? car(pair)  : pair; });
+             var vals = vlist.map(function (pair) { return isList(pair) ? cadr(pair) : symNil; });
 
-                     return evalFunction(cons(symLambda, cons(arrayToList(vars), body)), vals);
+             var env = createEnv(ENV_TRANSPARENT);
+
+             if (evalInLetContext)
+                 currentEnvs.push(env);
+
+             for (var i = 0; i < vars.length; ++i)
+                 setSymbolValue(intern(vars[i].name, env.locals), SYM_VARIABLE, Eval(vals[i]));
+
+             if (!evalInLetContext)
+                 currentEnvs.push(env);
+
+             var error;
+             try {
+                 var val = Eval(cons(symProgn, body));
+             } catch (x) {
+                 error = x;
+             }
+             currentEnvs.pop();
+
+             if (error)
+                 throw error;
+             return val;
+         }
+
+         special('let', function (lst) { return doLet(lst); });
+         special('let*', function (lst) { return doLet(lst, true); });
+
+         special('lambda', function (lst, form) {
+                     // TODO : Create closure (copy [1-level] currentEnvs and attatch it to the function)
+                     return form;
                  });
-
-         special('let*', function (lst) {
-                     // (let* VARLIST BODY...)
-                     assertArgCountL(1, argGte, lst);
-
-                     var vlist = listToArray(car(lst));
-                     var body  = cdr(lst);
-
-                     var vars = vlist.map(function (pair) { return isList(pair) ? car(pair)  : pair; });
-                     var vals = vlist.map(function (pair) { return isList(pair) ? cadr(pair) : symNil; });
-
-                     var env = {};
-                     localEnvs.push(env);
-
-                     for (var i = 0; i < vars.length; ++i)
-                         setSymbolValue(intern(vars[i].name, env), SYM_VARIABLE, Eval(vals[i]));
-
-                     var error;
-                     try {
-                         var val = Eval(cons(symProgn, body));
-                     } catch (x) {
-                         error = x;
-                     }
-                     localEnvs.pop();
-
-                     if (error)
-                         throw error;
-                     return val;
-                 });
-
-         special('lambda', function (lst, form) { return form; });
 
          // ====================================================================== //
          // Special forms / Control Structures
@@ -1107,6 +992,155 @@ var Mispli =
                  });
 
          // ====================================================================== //
+         // Parser
+         // ====================================================================== //
+
+         function SexParser() {}
+
+         SexParser.prototype = {
+             parse: function (str, multi) {
+                 this.i    = 0;
+                 this.str  = str;
+                 this.slen = str.length;
+
+                 if (multi)
+                 {
+                     var forms = [];
+                     while (!this.eos())
+                     {
+                         this.skip();
+                         forms.push(this.parseElement());
+                     }
+
+                     return forms;
+                 }
+
+                 this.skip();
+                 var form = this.parseElement();
+                 if (!this.eos())
+                     throw "Parse Error";
+                 return form;
+             },
+
+             eos: function () {
+                 return this.i >= this.slen;
+             },
+
+             isSpace: function (c) {
+                 return " \t\n".indexOf(c) !== -1;
+             },
+
+             skip: function () {
+                 while (this.isSpace(this.peekCurrent()) && !this.eos())
+                     this.i++;
+             },
+
+             getCurrent: function () {
+                 return this.str.charAt(this.i++);
+             },
+
+             peekCurrent: function () {
+                 return this.str.charAt(this.i);
+             },
+
+             peekNext: function () {
+                 return this.str.charAt(this.i + 1);
+             },
+
+             parseElement: function () {
+                 var current = this.peekCurrent();
+
+                 if (current === "#" && this.peekNext() === "'")
+                 {
+                     this.getCurrent();
+                     this.getCurrent();
+                     return cons(symFunction, cons(this.parseElement(), symNil));
+                 }
+
+                 if (current === "'")
+                 {
+                     this.getCurrent();
+                     return cons(symQuote, cons(this.parseElement(), symNil));
+                 }
+
+                 if (current === "(")
+                     return this.parseList();
+                 else if (current === "\"")
+                     return this.parseString();
+                 else
+                     return this.parseSymbolOrNumber(); // or number
+             },
+
+             parseList: function parseList() {
+                 var lst = [];
+
+                 if (this.getCurrent() !== "(")
+                     throw "parseList : ParseError";
+
+                 this.skip();
+
+                 while (this.peekCurrent() !== ")" && !this.eos())
+                 {
+                     lst.push(this.parseElement());
+                     this.skip();
+                 }
+
+                 if (this.getCurrent() !== ")")
+                     throw "parseList : Unclosed Parenthesis";
+
+                 var slst = symNil;
+
+                 while (lst.length)
+                     slst = [lst.pop(), slst];
+
+                 return slst;
+             },
+
+             parseString: function () {
+                 if (this.getCurrent() !== "\"")
+                     throw "parseString : Not a String";
+
+                 var buffer = [];
+                 var escaped = false;
+
+                 while ((escaped || this.peekCurrent() !== "\"") && !this.eos())
+                 {
+                     escaped = false;
+                     var current = this.getCurrent();
+                     if (current === "\\")
+                         escaped = true;
+                     buffer.push(current);
+                 }
+
+                 if (this.getCurrent() !== "\"")
+                     throw "parseList : Unterminated String";
+
+                 return createString(buffer.join(""));
+             },
+
+             parseSymbolOrNumber: function parseSymbolOrNumber() {
+                 const symbolChars = /[a-zA-Z0-9*&^%$@!~_+=<>:./-]/;
+
+                 var buffer = [];
+
+                 while (symbolChars.test(this.peekCurrent()) && !this.eos())
+                     buffer.push(this.getCurrent());
+
+                 if (!buffer.length)
+                     throw "parseSymbol : Parse error";
+
+                 var symbolName = buffer.join("");
+
+                 if (/^-?[0-9]+([.][0-9]*|e-?[0-9]+)?$/.test(symbolName))
+                     return createNumber(parseFloat(symbolName));
+
+                 return createSymbol(symbolName);
+             }
+         };
+
+         var parser = new SexParser();
+
+         // ====================================================================== //
          // LISP Codes
          // ====================================================================== //
 
@@ -1129,6 +1163,34 @@ var Mispli =
          // ====================================================================== //
          // Utils
          // ====================================================================== //
+
+         function sexpToStr(elem, omitParen) {
+             if (elem instanceof Array)
+             {
+                 var a    = sexpToStr(car(elem));
+                 var rest = cdr(elem);
+                 var b    = sexpToStr(rest, isList(rest));
+
+                 var center = isNil(rest) ? a : a + (isList(rest) ? " " : " . ") + b;
+
+                 return omitParen ? center : "(" + center + ")";
+             }
+
+             if (elem && elem.type)
+             {
+                 switch (elem.type)
+                 {
+                 case ATOM_SYMBOL:
+                     return elem.name;
+                 case ATOM_STRING:
+                     return "\"" + elem.value + "\"";
+                 case ATOM_NUMBER:
+                     return elem.value;
+                 }
+             }
+
+             return "sexpToStr : Non LISP object passed. It's value is `" + elem + "'";
+         }
 
          function dir(obj) {
              for (k in obj)
@@ -1155,7 +1217,7 @@ var Mispli =
              SYM_CONSTANT   : SYM_CONSTANT,
              // Envs
              globalEnv      : globalEnv,
-             localEnvs      : localEnvs,
+             currentEnvs    : currentEnvs,
              builtins       : builtins,
              specials       : specials,
              macros         : macros,
