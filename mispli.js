@@ -50,6 +50,37 @@ var Mispli =
          var symKey      = createSymbol('&key');
 
          // ====================================================================== //
+         // Public
+         // ====================================================================== //
+
+         var self = {
+             // constans
+             SYM_FUNCTION   : SYM_FUNCTION,
+             SYM_VARIABLE   : SYM_VARIABLE,
+             SYM_CONSTANT   : SYM_CONSTANT,
+             // Envs
+             globalEnv      : globalEnv,
+             currentEnvs    : currentEnvs,
+             builtins       : builtins,
+             specials       : specials,
+             macros         : macros,
+             // inspection
+             hasSymbolType  : hasSymbolType,
+             getSymbolValue : getSymbolValue,
+             setSymbolValue : setSymbolValue,
+             // methods
+             defSpecial     : special,
+             defBuiltin     : builtin,
+             parse          : function () { return parser.parse.apply(parser, arguments); },
+             evalBlock      : Eval,
+             evalLisp       : evalLisp,
+             sexpToStr      : sexpToStr,
+             syntaxChecker  : syntaxChecker,
+             // customize it (ex: Mispli.print = window.alert;)
+             print          : function (msg) { }
+         };
+
+         // ====================================================================== //
          // Env
          // ====================================================================== //
 
@@ -460,6 +491,8 @@ p
          }
 
          function evalFunction(func, vals, envs) {
+             var envType = ENV_BARRIER;
+
              if (isSymbol(func))
              {
                  // macro
@@ -488,6 +521,7 @@ p
                  var closure = func;
                  func = closure.lambda;
                  envs = closure.envs;
+                 envType = ENV_TRANSPARENT; // important
              }
 
              validateFunction(func);
@@ -502,7 +536,7 @@ p
              if (args.length !== vals.length)
                  throw argErrorMessage(args.length, vals.length);
 
-             var env = createEnv(ENV_BARRIER);
+             var env = createEnv(envType);
 
              for (var i = 0; i < args.length; ++i)
              {
@@ -838,6 +872,8 @@ p
          }
 
          special('defmacro', function (lst, envs) {
+                     assertArgCountL(2, argGte, lst);
+
                      var name  = car(lst);
                      var pargs = cadr(lst);
                      var body  = cddr(lst);
@@ -845,6 +881,22 @@ p
                      setMacro(name, cons(symLambda, cons(pargs, body)));
 
                      return symNil;
+                 });
+
+         special('macroexpand', function (lst, envs) {
+                     assertArgCountL(1, argGte, lst);
+
+                     var form = Eval(car(lst), envs);
+
+                     var sym  = car(form);
+                     var args = cdr(form);
+
+                     if (!isSymbol(sym) || !(sym.name in macros))
+                         return form;
+
+                     var expanded = evalFunction(macros[sym.name], listToArray(args), envs);
+
+                     return expanded;
                  });
 
          // ====================================================================== //
@@ -912,6 +964,15 @@ p
                                      || (x.name in specials)
                                      || (x.name in macros)
                                      || isSymbol(x) && hasSymbolType(x, SYM_FUNCTION))];
+                 });
+
+         // ====================================================================== //
+         // Builtin functions / Evaluation
+         // ====================================================================== //
+
+         builtin('eval', function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+                     return Eval(car(lst), envs);
                  });
 
          builtin('funcall', function (lst, envs) {
@@ -1325,37 +1386,6 @@ p
 
          evalLisp("(defmacro when (cond &rest body) (list 'if cond (cons 'progn body)))");
          evalLisp("(defmacro unless (cond &rest body) (cons 'if (cons cond (cons nil body))))");
-
-         // ====================================================================== //
-         // Public
-         // ====================================================================== //
-
-         var self = {
-             // constans
-             SYM_FUNCTION   : SYM_FUNCTION,
-             SYM_VARIABLE   : SYM_VARIABLE,
-             SYM_CONSTANT   : SYM_CONSTANT,
-             // Envs
-             globalEnv      : globalEnv,
-             currentEnvs    : currentEnvs,
-             builtins       : builtins,
-             specials       : specials,
-             macros         : macros,
-             // inspection
-             hasSymbolType  : hasSymbolType,
-             getSymbolValue : getSymbolValue,
-             setSymbolValue : setSymbolValue,
-             // methods
-             defSpecial     : special,
-             defBuiltin     : builtin,
-             parse          : function () { return parser.parse.apply(parser, arguments); },
-             evalBlock      : Eval,
-             evalLisp       : evalLisp,
-             sexpToStr      : sexpToStr,
-             syntaxChecker  : syntaxChecker,
-             // customize it (ex: Mispli.print = window.alert;)
-             print          : function (msg) { }
-         };
 
          return self;
      })();
