@@ -60,7 +60,7 @@ var Mispli =
          // ====================================================================== //
 
          var self = {
-             // constans
+             // constants
              SYM_FUNCTION   : SYM_FUNCTION,
              SYM_VARIABLE   : SYM_VARIABLE,
              SYM_CONSTANT   : SYM_CONSTANT,
@@ -82,8 +82,8 @@ var Mispli =
              evalLisp       : evalLisp,
              sexpToStr      : sexpToStr,
              syntaxChecker  : syntaxChecker,
-             // customize it (ex: Mispli.print = window.alert;)
-             print          : function (msg) { }
+             // customize this (ex: Mispli.print = window.alert;)
+             print          : function (msg) { if (typeof console !== "undefined") console.log(msg); }
          };
 
          // ====================================================================== //
@@ -328,13 +328,35 @@ var Mispli =
              return lst;
          }
 
-         function eachl(lst, func) {
+         function eachL(func, lst) {
              var i = 0;
              while (isList(lst) && isTrue(lst))
              {
                  func(car(lst), cdr(lst), i++);
                  lst = cdr(lst);
              }
+         }
+
+         function everyL(func, lst) {
+             var i = 0;
+             while (isList(lst) && isTrue(lst))
+             {
+                 if (!func(car(lst), cdr(lst), i++))
+                     return false;
+                 lst = cdr(lst);
+             }
+             return true;
+         }
+
+         function someL(func, lst) {
+             var i = 0;
+             while (isList(lst) && isTrue(lst))
+             {
+                 if (func(car(lst), cdr(lst), i++))
+                     return true;
+                 lst = cdr(lst);
+             }
+             return false;
          }
 
          // ====================================================================== //
@@ -443,7 +465,7 @@ var Mispli =
                      newList.push(car(lst));
                      lst = cdr(lst);
                  }
-p
+
                  if (isTrue(car(lst)))
                      newList.push(car(lst));
              }
@@ -469,8 +491,19 @@ p
                  {
                      if (!args[i + 1])
                          throw "missing argument name for &optional";
-                     pArgs.push(args[i + 1]);
-                     pVals.push(vals[j] || symNil);
+
+                     if (isCons(args[i + 1]))
+                     {
+                         // with defalut value e.g. (&optional (x 10))
+                         pArgs.push(car(args[i + 1]));
+                         pVals.push(vals[j] || cadr(args[i + 1]));
+                     }
+                     else
+                     {
+                         pArgs.push(args[i + 1]);
+                         pVals.push(vals[j] || symNil);
+                     }
+
                      i++;
                      continue;
                  }
@@ -505,7 +538,24 @@ p
          }
 
          function validateFunction(func) {
-             if (!equal(car(func), symLambda) || !listToArray(cadr(func)).every(isSymbol))
+             var optional;
+
+             if (!equal(car(func), symLambda) ||
+                 !everyL(function (elem) {
+                             if (isSymbol(elem))
+                             {
+                                 optional = equal(elem, symOptional);
+                                 return true;
+                             }
+                             else if (isList(elem))
+                             {
+                                 if (!optional)
+                                     return false;
+                                 return isSymbol(car(elem)) && isNil(cddr(elem));
+                             }
+                             optional = false;
+                             return false;
+                         }, cadr(func)))
                  throw "invalid function " + sexpToStr(func);
          }
 
@@ -521,7 +571,7 @@ p
                  var declarations = cdar(body);
                  body = cdr(body);
 
-                 eachl(declarations, function (pair) {
+                 eachL(function (pair) {
                            var type = car(pair), sym = cadr(pair);
 
                            if (!isSymbol(type) || !isSymbol(sym))
@@ -529,7 +579,7 @@ p
 
                            if (equal(type, symSpecial) && !isNil(sym))
                                specialVars[sym.name] = true;
-                       });
+                       }, declarations);
              }
 
              var env = createEnv(envType);
@@ -599,7 +649,7 @@ p
              }
              else if (!isList(func))
              {
-                 throw "wrong type function";
+                 throw "invalide function " + sexpToStr(func);
              }
 
              validateFunction(func);
@@ -1062,6 +1112,28 @@ p
                      var func = car(lst), seq = cadr(lst);
 
                      return mapList(function (elem) { return evalFunction(func, [elem], envs); }, seq);
+                 });
+
+         builtin('some', function (lst, envs) {
+                     assertArgCountL(2, argEq, lst);
+
+                     var func = car(lst), seq = cadr(lst);
+
+                     return boxBool[
+                         someL(function (elem, rest, i) {
+                                   return isTrue(evalFunction(func, [elem], envs));
+                               }, seq)];
+                 });
+
+         builtin('every', function (lst, envs) {
+                     assertArgCountL(2, argEq, lst);
+
+                     var func = car(lst), seq = cadr(lst);
+
+                     return boxBool[
+                         everyL(function (elem, rest, i) {
+                                    return isTrue(evalFunction(func, [elem], envs));
+                                }, seq)];
                  });
 
          // ====================================================================== //
