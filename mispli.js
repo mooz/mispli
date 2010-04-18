@@ -29,6 +29,10 @@ var Mispli =
          const ENV_TRANSPARENT = 1;
          const ENV_BARRIER     = 2;
 
+         const EVAL_INNER_ENV = 1;
+         const EVAL_OUTER_ENV = 2;
+         const EVAL_NOTHING   = 3;
+
          var symTrue = intern("t");
          setSymbolValue(symTrue, SYM_CONSTANT, symTrue);
 
@@ -45,6 +49,8 @@ var Mispli =
          var symProgn    = createSymbol('progn');
          var symQuote    = createSymbol('quote');
          var symFunction = createSymbol('function');
+         var symDeclare  = createSymbol('declare');
+         var symSpecial  = createSymbol('special');
          var symRest     = createSymbol('&rest');
          var symOptional = createSymbol('&optional');
          var symKey      = createSymbol('&key');
@@ -318,6 +324,15 @@ var Mispli =
              return lst;
          }
 
+         function eachl(lst, func) {
+             var i = 0;
+             while (isList(lst) && isTrue(lst))
+             {
+                 func(car(lst), cdr(lst), i++);
+                 lst = cdr(lst);
+             }
+         }
+
          // ====================================================================== //
          // Predicatives
          // ====================================================================== //
@@ -490,6 +505,62 @@ p
                  throw "invalid function " + sexpToStr(func);
          }
 
+         function evalFunctionBody(body, args, vals, envs, envType, evalType) {
+             if (args.length !== vals.length)
+                 throw argErrorMessage(args.length, vals.length);
+
+             var specialVars = {};
+
+             // special variables
+             if (isList(car(body)) && equal(caar(body), symDeclare))
+             {
+                 var declarations = cdar(body);
+                 body = cdr(body);
+
+                 eachl(declarations, function (pair) {
+                           var type = car(pair), sym = cadr(pair);
+
+                           if (!isSymbol(type) || !isSymbol(sym))
+                               throw "wrong type symbolp";
+
+                           if (equal(type, symSpecial) && !isNil(sym))
+                               specialVars[sym.name] = true;
+                       });
+             }
+
+             var env = createEnv(envType);
+
+             if (evalType === EVAL_INNER_ENV)
+                 envs.push(env);
+
+             for (var i = 0; i < args.length; ++i)
+             {
+                 var sym = intern(args[i].name, env.locals);
+                 var val = (evalType === EVAL_NOTHING) ? vals[i] : Eval(vals[i], envs);
+                 setSymbolValue(sym, SYM_VARIABLE, val);
+
+                 // special variable
+                 if (specialVars[sym.name])
+                     env.dynamics[sym.name] = sym;
+             }
+
+             if (evalType !== EVAL_INNER_ENV)
+                 envs.push(env);
+
+             var error;
+             envs.push(env);
+             try {
+                 var val = Eval(cons(symProgn, body), envs);
+             } catch (x) {
+                 error = x;
+             }
+             envs.pop();
+
+             if (error)
+                 throw error;
+             return val;
+         }
+
          function evalFunction(func, vals, envs) {
              var envType = ENV_BARRIER;
 
@@ -533,29 +604,7 @@ p
              args = processed.args;
              vals = processed.vals;
 
-             if (args.length !== vals.length)
-                 throw argErrorMessage(args.length, vals.length);
-
-             var env = createEnv(envType);
-
-             for (var i = 0; i < args.length; ++i)
-             {
-                 var sym = intern(args[i].name, env.locals);
-                 setSymbolValue(sym, SYM_VARIABLE, vals[i]);
-             }
-
-             var error;
-             envs.push(env);
-             try {
-                 var val = Eval(cons(symProgn, body), envs);
-             } catch (x) {
-                 error = x;
-             }
-             envs.pop();
-
-             if (error)
-                 throw error;
-             return val;
+             return evalFunctionBody(body, args, vals, envs, envType, EVAL_NOTHING);
          }
 
          var evalDepth    = 0;
@@ -708,7 +757,7 @@ p
                      return symNil;
                  });
 
-         function doLet(lst, evalInLetContext, envs) {
+         function doLet(lst, evalType, envs) {
              // (let VARLIST BODY...)
              assertArgCountL(1, argGte, lst);
 
@@ -717,35 +766,14 @@ p
              var vlist = listToArray(car(lst));
              var body  = cdr(lst);
 
-             var vars = vlist.map(function (pair) { return isList(pair) ? car(pair)  : pair; });
+             var args = vlist.map(function (pair) { return isList(pair) ? car(pair)  : pair; });
              var vals = vlist.map(function (pair) { return isList(pair) ? cadr(pair) : symNil; });
 
-             var env = createEnv(ENV_TRANSPARENT);
-
-             if (evalInLetContext)
-                 envs.push(env);
-
-             for (var i = 0; i < vars.length; ++i)
-                 setSymbolValue(intern(vars[i].name, env.locals), SYM_VARIABLE, Eval(vals[i], envs));
-
-             if (!evalInLetContext)
-                 envs.push(env);
-
-             var error;
-             try {
-                 var val = Eval(cons(symProgn, body), envs);
-             } catch (x) {
-                 error = x;
-             }
-             envs.pop();
-
-             if (error)
-                 throw error;
-             return val;
+             return evalFunctionBody(body, args, vals, envs, ENV_TRANSPARENT, evalType);
          }
 
-         special('let', function (lst, envs) { return doLet(lst, false, envs); });
-         special('let*', function (lst, envs) { return doLet(lst, true, envs); });
+         special('let', function (lst, envs) { return doLet(lst, EVAL_OUTER_ENV, envs); });
+         special('let*', function (lst, envs) { return doLet(lst, EVAL_INNER_ENV, envs); });
 
          special('lambda', function (lst, envs) {
                      return createClosure(cons(symLambda, lst), envs);
