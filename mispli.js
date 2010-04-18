@@ -244,13 +244,17 @@ var Mispli =
                  // local variable (in current scope created by function)
                  if ((sym = findSymbolInEnv(name, type, envs[envs.length - 1].locals)))
                      return sym;
-                 // local variable or variables in closure (in current outer scope created by `let')
-                 for (i = envs.length - 2; i >= 0; --i)
+
+                 if (envs[envs.length - 1].type === ENV_TRANSPARENT)
                  {
-                     if (envs[i].type !== ENV_TRANSPARENT)
-                         break;
-                     if ((sym = findSymbolInEnv(name, type, envs[i].locals)))
-                         return sym;
+                     // local variable or variables in closure (in current outer scope created by `let')
+                     for (i = envs.length - 2; i >= 0; --i)
+                     {
+                         if (envs[i].type !== ENV_TRANSPARENT)
+                             break;
+                         if ((sym = findSymbolInEnv(name, type, envs[i].locals)))
+                             return sym;
+                     }
                  }
 
                  // dynamic variable
@@ -372,7 +376,7 @@ var Mispli =
              return equal(a, b);
          }
 
-         function isNil(x)    { return x === symNil; }
+         function isNil(x)    { return x.name && x.name === "nil"; }
          function isTrue (x)  { return !isNil(x); }
          function isSymbol(x) { return x.type === ATOM_SYMBOL || isNil(x); }
          function isNumber(x) { return x.type === ATOM_NUMBER; }
@@ -390,13 +394,13 @@ var Mispli =
 
          function car(lst)  {
              if (!isList(lst))
-                 throw new Error("wrong type argument listp" + sexpToStr(lst));
+                 throw new Error("wrong type argument listp " + sexpToStr(lst));
                  // throw "wrong type argument listp" + sexpToStr(lst);
              return isNil(lst) ? symNil : lst[0];
          }
          function cdr(lst)  {
              if (!isList(lst))
-                 throw "wrong type argument listp" + sexpToStr(lst);
+                 throw "wrong type argument listp " + sexpToStr(lst);
              return isNil(lst) ? symNil : lst[1];
          }
 
@@ -763,8 +767,6 @@ p
          function doLet(lst, evalType, envs) {
              // (let VARLIST BODY...)
              assertArgCountL(1, argGte, lst);
-
-             envs = envs || currentEnvs;
 
              var vlist = listToArray(car(lst));
              var body  = cdr(lst);
