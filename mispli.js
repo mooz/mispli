@@ -642,7 +642,7 @@ p
                  // ((lambda () ...) ...)
                  // We does not need to create the closure
                  if (isCons(sym) && equal(car(sym), symLambda))
-                     return evalFunction(form, listToArray(args).map(curry2(Eval)), envs);
+                     return evalFunction(car(form), listToArray(args).map(curry2(Eval)), envs);
 
                  throw "invalid function " + sexpToStr(sym);
              }
