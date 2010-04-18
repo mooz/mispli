@@ -525,14 +525,15 @@ p
          }
 
          var evalDepth    = 0;
-         var maxEvalDepth = 100000;
+         var maxEvalDepth = 1000000;
+         // maxEvalDepth = -1;
 
          function Eval(form, envs) {
              // [...].map(Eval) => env becomes the index (number)
              if (!(envs instanceof Array))
                  envs = currentEnvs;
 
-             if (++evalDepth > maxEvalDepth)
+             if (maxEvalDepth > 0 && ++evalDepth > maxEvalDepth)
                  throw "eval depth exceeds maxEvalDepth (" + maxEvalDepth + ")";
 
              if (isCons(form))
@@ -714,6 +715,16 @@ p
 
          special('lambda', function (lst, envs) {
                      return createClosure(cons(symLambda, lst), envs);
+                 });
+
+         special('time', function (lst, envs) {
+                     assertArgCountL(1, argEq, lst);
+
+                     var begin = +new Date();
+                     Eval(car(lst), envs);
+                     var end = +new Date();
+
+                     return createNumber((end - begin) / 1000);
                  });
 
          // ====================================================================== //
@@ -1029,7 +1040,7 @@ p
          // Builtin functions / IO
          // ====================================================================== //
 
-         builtin('print', function (lst) { assertArgCountL(1, argEq, lst); print(sexpToStr(car(lst))); return car(lst); });
+         builtin('print', function (lst) { assertArgCountL(1, argEq, lst); self.print(sexpToStr(car(lst))); return car(lst); });
 
          // ====================================================================== //
          // Builtin functions / Math
@@ -1095,6 +1106,10 @@ p
                      while (!this.eos())
                      {
                          this.skip();
+
+                         if (this.eos())
+                             return forms;
+
                          forms.push(this.parseElement());
                      }
 
@@ -1102,9 +1117,15 @@ p
                  }
 
                  this.skip();
+
+                 if (this.eos()) // when blank line is given
+                     return null;
+
                  var form = this.parseElement();
+
                  if (!this.eos())
                      throw "Parse Error";
+
                  return form;
              },
 
@@ -1293,10 +1314,10 @@ p
 
          function dir(obj) {
              for (k in obj)
-                 print(k + " : " + obj[k]);
+                 self.print(k + " : " + obj[k]);
          }
 
-         function printa(atom) { print(sexpToStr(atom)); }
+         function printa(atom) { self.print(sexpToStr(atom)); }
 
          // ====================================================================== //
          // Define misc codes
@@ -1327,9 +1348,13 @@ p
              // methods
              defSpecial     : special,
              defBuiltin     : builtin,
+             parse          : function () { return parser.parse.apply(parser, arguments); },
+             evalBlock      : Eval,
              evalLisp       : evalLisp,
              sexpToStr      : sexpToStr,
-             syntaxChecker  : syntaxChecker
+             syntaxChecker  : syntaxChecker,
+             // customize it (ex: Mispli.print = window.alert;)
+             print          : function (msg) { }
          };
 
          return self;
