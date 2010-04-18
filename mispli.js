@@ -548,7 +548,6 @@ p
                  envs.push(env);
 
              var error;
-             envs.push(env);
              try {
                  var val = Eval(cons(symProgn, body), envs);
              } catch (x) {
@@ -593,6 +592,10 @@ p
                  func = closure.lambda;
                  envs = closure.envs;
                  envType = ENV_TRANSPARENT; // important
+             }
+             else if (!isList(func))
+             {
+                 throw "wrong type function";
              }
 
              validateFunction(func);
