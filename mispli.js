@@ -456,7 +456,7 @@ var Mispli =
              for (var i = 0; i < arguments.length - 1; ++i)
              {
                  if (!isList(arguments[i]))
-                     throw "append : wrong type argument " + sexpToStr(arguments[i]);
+                     throw "wrong type argument listp " + sexpToStr(arguments[i]);
 
                  lst = arguments[i];
 
@@ -1090,7 +1090,7 @@ var Mispli =
 
          builtin('list', function (lst) { return lst; });
          builtin('tail', function (lst) { assertArgCountL(1, argEq, lst); return tail(car(lst)); });
-         builtin('append', append);
+         builtin('append', function (lst) { return append.apply(null, listToArray(lst)); });
 
          function mapList(func, seq) {
              if (!isList(seq))
