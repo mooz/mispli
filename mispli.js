@@ -417,8 +417,7 @@ var Mispli =
 
          function car(lst)  {
              if (!isList(lst))
-                 throw new Error("wrong type argument listp " + sexpToStr(lst));
-                 // throw "wrong type argument listp" + sexpToStr(lst);
+                 throw "wrong type argument listp " + sexpToStr(lst);
              return isNil(lst) ? symNil : lst[0];
          }
          function cdr(lst)  {
@@ -684,10 +683,13 @@ var Mispli =
 
                  if (isSymbol(sym))
                  {
-                     if (sym.name in specials)
-                         return specials[sym.name](args, envs);
-                     else
-                         return evalFunction(sym, listToArray(args), envs);
+                     try
+                     {
+                         if (sym.name in specials)
+                             return specials[sym.name](args, envs);
+                         else
+                             return evalFunction(sym, listToArray(args), envs);
+                     } catch (x) { throw sym.name + " : " + x; }
                  }
 
                  // ((lambda () ...) ...)
@@ -1135,6 +1137,34 @@ var Mispli =
                          everyL(function (elem, rest, i) {
                                     return isTrue(evalFunction(func, [elem], envs));
                                 }, seq)];
+                 });
+
+         builtin('assoc', function (lst, envs) {
+                     assertArgCountL(2, argEq, lst);
+
+                     var key = car(lst), alist = cadr(lst);
+                     var found = symNil;
+
+                     someL(function (pair) {
+                               if (equal(key, car(pair)))
+                                   return found = pair;
+                           }, alist);
+
+                     return found;
+                 });
+
+         builtin('rassoc', function (lst, envs) {
+                     assertArgCountL(2, argEq, lst);
+
+                     var key = car(lst), alist = cadr(lst);
+                     var found = symNil;
+
+                     someL(function (pair) {
+                               if (equal(key, cdr(pair)))
+                                   return found = pair;
+                           }, alist);
+
+                     return found;
                  });
 
          // ====================================================================== //
