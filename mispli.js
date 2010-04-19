@@ -54,6 +54,7 @@ var Mispli =
          var symRest     = createSymbol('&rest');
          var symOptional = createSymbol('&optional');
          var symKey      = createSymbol('&key');
+         var symDot      = createSymbol('.');
 
          // ====================================================================== //
          // Public
@@ -1354,7 +1355,25 @@ var Mispli =
 
                  while (this.peekCurrent() !== ")" && !this.eos())
                  {
-                     lst.push(this.parseElement());
+                     var elem = this.parseElement();
+
+                     if (equal(elem, symDot))
+                     {
+                         if (lst.length !== 1)
+                             throw "parseList : . in wrong context";
+
+                         this.skip();
+                         var pair = [lst[0], this.parseElement()];
+                         this.skip();
+
+                         if (this.getCurrent() !== ")")
+                             throw "parseList : . in wrong context";
+
+                         return pair;
+                     }
+
+                     lst.push(elem);
+
                      this.skip();
                  }
 
@@ -1393,6 +1412,7 @@ var Mispli =
 
              parseSymbolOrNumber: function parseSymbolOrNumber() {
                  const symbolChars = /[a-zA-Z0-9*&^%$@!~_+=<>:./-]/;
+                 const numberPat   = /^-?[0-9]+([.][0-9]*|e-?[0-9]+)?$/;
 
                  var buffer = [];
 
@@ -1400,11 +1420,11 @@ var Mispli =
                      buffer.push(this.getCurrent());
 
                  if (!buffer.length)
-                     throw "parseSymbol : Parse error";
+                     throw "parseSymbolOrNumber : Parse error";
 
                  var symbolName = buffer.join("");
 
-                 if (/^-?[0-9]+([.][0-9]*|e-?[0-9]+)?$/.test(symbolName))
+                 if (numberPat.test(symbolName))
                      return createNumber(parseFloat(symbolName));
 
                  return createSymbol(symbolName);
