@@ -1088,6 +1088,19 @@ var Mispli =
          builtin('cdar', function (lst) { assertArgCountL(1, argEq, lst); return cdar(car(lst)); });
          builtin('cddr', function (lst) { assertArgCountL(1, argEq, lst); return cddr(car(lst)); });
 
+         builtin(['setcar', 'rplaca'], function (lst) {
+                     assertArgCountL(2, argEq, lst);
+                     if (!isCons(car(lst)))
+                         throw "wrong type argument consp " + sexpToStr(car(lst));
+                     return setCar(car(lst), cadr(lst));
+                 });
+         builtin(['setcdr', 'rplacd'], function (lst) {
+                     assertArgCountL(2, argEq, lst);
+                     if (!isCons(car(lst)))
+                         throw "wrong type argument consp " + sexpToStr(car(lst));
+                     return setCdr(car(lst), cadr(lst));
+                 });
+
          builtin('list', function (lst) { return lst; });
          builtin('tail', function (lst) { assertArgCountL(1, argEq, lst); return tail(car(lst)); });
          builtin('append', function (lst) { return append.apply(null, listToArray(lst)); });
