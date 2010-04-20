@@ -614,8 +614,8 @@ var Mispli =
              return val;
          }
 
-         function evalFunction(func, vals, envs) {
-             var envType = ENV_BARRIER;
+         function evalFunction(func, vals, envs, envType) {
+             envType = envType || ENV_BARRIER;
 
              if (isSymbol(func))
              {
@@ -695,7 +695,7 @@ var Mispli =
                  // ((lambda () ...) ...)
                  // We does not need to create the closure
                  if (isCons(sym) && equal(car(sym), symLambda))
-                     return evalFunction(car(form), listToArray(args).map(curry2(Eval)), envs);
+                     return evalFunction(car(form), listToArray(args).map(curry2(Eval)), envs, ENV_TRANSPARENT);
 
                  throw "invalid function " + sexpToStr(sym);
              }
