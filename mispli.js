@@ -774,6 +774,26 @@ var Mispli =
          // Special forms / Basics
          // ====================================================================== //
 
+         special('defvar', function (lst, envs) {
+                     assertArgCountL(1, argGte, lst);
+                     assertArgCountL(2, argLte, lst);
+
+                     var uiSym = car(lst);
+
+                     if (!isSymbol(uiSym))
+                         throw "wrong type argument listp " + sexpToStr(uiSym);
+
+                     var sym = intern(uiSym.name, globalEnv);
+
+                     if (hasSymbolType(sym, SYM_CONSTANT))
+                         throw "setting value to the constant " + sexpToStr(uiSym);
+
+                     if (!hasSymbolType(sym, SYM_VARIABLE))
+                         setSymbolValue(sym, SYM_VARIABLE, cadr(lst));
+
+                     return sym;
+                 });
+
          special(['quote', 'function'], function (lst, envs) {
                      assertArgCountL(1, argEq, lst);
 
@@ -1039,17 +1059,22 @@ var Mispli =
                  });
          builtin('boundp', function (lst, envs) {
                      assertArgCountL(1, argEq, lst);
-                     var x = car(lst);
-                     return boxBool[isSymbol(x) && (hasSymbolType(x, SYM_CONSTANT || hasSymbolType(x, SYM_VARIABLE)))];
+                     var uiSym = car(lst);
+
+                     var sym = findSymbolInEnv(uiSym.name, SYM_CONSTANT, globalEnv)
+                         || findSymbolInEnv(uiSym.name, SYM_VARIABLE, globalEnv);
+
+                     return boxBool[!!sym];
                  });
          builtin('fboundp', function (lst, envs) {
                      assertArgCountL(1, argEq, lst);
-                     var x = car(lst);
-                     return boxBool[isSymbol(x) &&
-                                    ((x.name in builtins)
-                                     || (x.name in specials)
-                                     || (x.name in macros)
-                                     || isSymbol(x) && hasSymbolType(x, SYM_FUNCTION))];
+
+                     var uiSym = car(lst);
+
+                     return boxBool[((uiSym.name in builtins) ||
+                                     (uiSym.name in specials) ||
+                                     (uiSym.name in macros)   ||
+                                     !!findSymbolInEnv(uiSym.name, SYM_FUNCTION, globalEnv))];
                  });
 
          // ====================================================================== //
@@ -1554,6 +1579,8 @@ var Mispli =
 
          evalLisp("(defmacro when (cond &rest body) (list 'if cond (cons 'progn body)))");
          evalLisp("(defmacro unless (cond &rest body) (cons 'if (cons cond (cons nil body))))");
+         evalLisp("(defmacro incf (place &optional x) (list 'setq place (list '+ place (list 'or x 1))))");
+         evalLisp("(defmacro decf (place &optional x) (list 'setq place (list '- place (list 'or x 1))))");
 
          return self;
      })();
