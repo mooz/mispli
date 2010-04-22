@@ -639,17 +639,14 @@ var Mispli =
 
                  vals = vals.map(curry2(Eval, envs));
              }
-             else if (func && func.type && func.type === SP_CLOSURE)
+
+             if (func && func.type && func.type === SP_CLOSURE)
              {
                  // lexical closure
                  var closure = func;
                  func = closure.lambda;
-                 envs = closure.envs;
+                 envs = (envs || []).concat(closure.envs);
                  envType = ENV_TRANSPARENT; // important
-             }
-             else if (!isList(func))
-             {
-                 throw "invalide function " + sexpToStr(func);
              }
 
              validateFunction(func);
@@ -832,7 +829,7 @@ var Mispli =
                      var body  = cddr(lst);
 
                      var func = cons(symLambda, cons(pargs, body));
-                     setFunction(name, func);
+                     setFunction(name, createClosure(func, envs));
 
                      return symNil;
                  });
