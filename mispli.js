@@ -246,16 +246,13 @@ var Mispli =
                  if ((sym = findSymbolInEnv(name, type, envs[envs.length - 1].locals)))
                      return sym;
 
-                 if (envs[envs.length - 1].type === ENV_TRANSPARENT)
+                 // local variable or variables in closure (in current outer scope created by `let')
+                 for (i = envs.length - 2; i >= 0; --i)
                  {
-                     // local variable or variables in closure (in current outer scope created by `let')
-                     for (i = envs.length - 2; i >= 0; --i)
-                     {
-                         if (envs[i].type !== ENV_TRANSPARENT)
-                             break;
-                         if ((sym = findSymbolInEnv(name, type, envs[i].locals)))
-                             return sym;
-                     }
+                     if (envs[i].type !== ENV_TRANSPARENT)
+                         break;
+                     if ((sym = findSymbolInEnv(name, type, envs[i].locals)))
+                         return sym;
                  }
 
                  // dynamic variable
@@ -639,6 +636,11 @@ var Mispli =
 
                  vals = vals.map(curry2(Eval, envs));
              }
+             else
+             {
+                 // law closure like (lambda () ...)
+                 envType = ENV_TRANSPARENT; // important
+             }
 
              if (func && func.type && func.type === SP_CLOSURE)
              {
@@ -646,7 +648,6 @@ var Mispli =
                  var closure = func;
                  func = closure.lambda;
                  envs = (envs || []).concat(closure.envs);
-                 envType = ENV_TRANSPARENT; // important
              }
 
              validateFunction(func);
