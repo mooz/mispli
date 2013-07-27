@@ -1581,3 +1581,6 @@ var Mispli = (function () {
 
   return self;
 })();
+
+if (typeof exports !== "undefined")
+  exports.Mispli = Mispli;

@@ -1,0 +1,10 @@
+{
+  "name": "mispli",
+  "description": "A simple LISP implementation",
+  "version": "0.0.1",
+  "main": "./mispli.js",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/mooz/mispli"
+  }
+}
