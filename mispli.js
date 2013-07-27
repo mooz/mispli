@@ -1021,7 +1021,7 @@ var Mispli =
 
          builtin(['eq', 'eql'], function (lst, envs) {
                      assertArgCountL(2, argEq, lst);
-                     return boxBool[eq(a, b)];
+                     return boxBool[eq(car(lst), cadr(lst))];
                  });
          builtin('equal', function (lst, envs) {
                      assertArgCountL(2, argEq, lst);
