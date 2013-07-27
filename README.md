@@ -1,5 +1,7 @@
-Mispli: A small lisp impelmentation written in JavaScript
-=========================================================
+Mispli
+======
+
+A small lisp impelmentation written in JavaScript.
 
 ![mispli](http://mooz.github.io/image/mispli_screenshot.png "REPL that works in browsers")
 
